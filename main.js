@@ -7,12 +7,13 @@ class DiskVisualization {
         this.uniformBuffer = null;
         this.bindGroup = null;
         
-        this.diskRadius = 1.0;
-        this.observerDistance = 3.0;
+        this.diskRadius = 10.0;
+        this.innerRadius = 4.0;
+        this.observerDistance = 30.0;
         
         this.camera = {
             theta: 0,
-            phi: Math.PI / 2,
+            phi: Math.PI / 3,
             radius: this.observerDistance
         };
         
@@ -27,6 +28,7 @@ class DiskVisualization {
     
     updateUI() {
         document.getElementById('radius').textContent = this.diskRadius.toFixed(1);
+        document.getElementById('innerRadius').textContent = this.innerRadius.toFixed(1);
         document.getElementById('distance').textContent = this.observerDistance.toFixed(1);
     }
     
@@ -89,15 +91,15 @@ class DiskVisualization {
                 cameraPos: vec3<f32>,
                 padding1: f32,
                 diskRadius: f32,
+                innerRadius: f32,
                 screenWidth: f32,
                 screenHeight: f32,
-                time: f32,
                 viewMatrix: mat4x4<f32>,
             }
             
             @group(0) @binding(0) var<uniform> uniforms: Uniforms;
             
-            fn rayDiskIntersection(rayOrigin: vec3<f32>, rayDir: vec3<f32>, diskRadius: f32) -> bool {
+            fn rayDiskIntersection(rayOrigin: vec3<f32>, rayDir: vec3<f32>, diskRadius: f32, innerRadius: f32) -> bool {
                 if (abs(rayDir.z) < 0.0001) {
                     return false;
                 }
@@ -110,7 +112,7 @@ class DiskVisualization {
                 let hitPoint = rayOrigin + t * rayDir;
                 let distanceFromCenter = length(hitPoint.xy);
                 
-                return distanceFromCenter <= diskRadius;
+                return distanceFromCenter <= diskRadius && distanceFromCenter >= innerRadius;
             }
             
             @fragment
@@ -129,7 +131,7 @@ class DiskVisualization {
                 let viewMatrixInv = transpose(uniforms.viewMatrix);
                 let rayDir = normalize((viewMatrixInv * vec4<f32>(rayDirLocal, 0.0)).xyz);
                 
-                if (rayDiskIntersection(uniforms.cameraPos, rayDir, uniforms.diskRadius)) {
+                if (rayDiskIntersection(uniforms.cameraPos, rayDir, uniforms.diskRadius, uniforms.innerRadius)) {
                     return vec4<f32>(1.0, 0.2, 0.2, 1.0);
                 } else {
                     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
@@ -201,9 +203,9 @@ class DiskVisualization {
         uniformData[3] = 0;
         
         uniformData[4] = this.diskRadius;
-        uniformData[5] = this.canvas.width;
-        uniformData[6] = this.canvas.height;
-        uniformData[7] = performance.now() / 1000.0;
+        uniformData[5] = this.innerRadius;
+        uniformData[6] = this.canvas.width;
+        uniformData[7] = this.canvas.height;
         
         for (let i = 0; i < 16; i++) {
             uniformData[8 + i] = viewMatrix[i];
@@ -276,7 +278,7 @@ class DiskVisualization {
             const deltaY = e.clientY - this.mouseState.lastY;
             
             this.camera.theta += deltaX * 0.01;
-            this.camera.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.camera.phi + deltaY * 0.01));
+            this.camera.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.camera.phi - deltaY * 0.01));
             
             this.mouseState.lastX = e.clientX;
             this.mouseState.lastY = e.clientY;
@@ -286,8 +288,8 @@ class DiskVisualization {
         
         this.canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
-            const deltaDistance = e.deltaY * 0.01;
-            this.camera.radius = Math.max(1.0, Math.min(40.0, this.camera.radius + deltaDistance));
+            const deltaDistance = e.deltaY * 0.05;
+            this.camera.radius = Math.max(10.0, Math.min(400.0, this.camera.radius + deltaDistance));
             this.observerDistance = this.camera.radius;
             this.updateUI();
         });
