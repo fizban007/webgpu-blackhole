@@ -146,8 +146,10 @@ class DiskVisualization {
                 
                 let sth = sin(th);
                 let cth = cos(th);
-                let c2th = cos(2.0 * th);
-                let s2th = sin(2.0 * th);
+                let sth2 = sth * sth;
+                let cth2 = cth * cth;
+                let c2th = 2.0 * cth2 - 1.0; // cos(2θ) = 2cos²θ - 1
+                let s2th = 2.0 * sth * cth;  // sin(2θ) = 2sinθcosθ
                 let cscth = 1.0 / sth;
                 let a2 = a * a;
                 let a3 = a * a2;
@@ -159,22 +161,22 @@ class DiskVisualization {
                 let r4 = r2 * r2;
                 let r6 = r2 * r4;
                 
-                metric.delta = r * r - 2.0 * M * r + a * a;
-                metric.sigma = square(r2 + a2) - a2 * metric.delta * square(sth);
-                metric.rho2 = r2 + a * a * cth * cth;
+                metric.delta = r2 - 2.0 * M * r + a2;
+                metric.sigma = square(r2 + a2) - a2 * metric.delta * sth2;
+                metric.rho2 = r2 + a2 * cth2;
                 
                 metric.alpha = sqrt(metric.rho2 * metric.delta / metric.sigma);
                 metric.beta3 = -2.0 * M * a * r / metric.sigma;
                 
                 metric.g_00 = 2.0 * M * r / metric.rho2 - 1.0;
-                metric.g_03 = -2.0 * M * a * r / metric.rho2 * square(sth);
+                metric.g_03 = -2.0 * M * a * r / metric.rho2 * sth2;
                 metric.g_11 = metric.rho2 / metric.delta;
                 metric.g_22 = metric.rho2;
-                metric.g_33 = metric.sigma * square(sth) / metric.rho2;
+                metric.g_33 = metric.sigma * sth2 / metric.rho2;
                 
                 metric.gamma11 = metric.delta / metric.rho2;
                 metric.gamma22 = 1.0 / metric.rho2;
-                metric.gamma33 = metric.rho2 / metric.sigma / square(sth);
+                metric.gamma33 = metric.rho2 / metric.sigma / sth2;
                 
                 // Derivatives
                 metric.d_alpha_dr = M * 
@@ -186,7 +188,7 @@ class DiskVisualization {
                     (-a5 + 3.0 * a3 * r2 + 6.0 * a * r4 + a3 * (r2 - a2) * c2th) /
                     square(metric.sigma);
                 
-                metric.d_gamma11_dr = 2.0 * (r * (M * r - a2) + a2 * (r - M) * square(cth)) /
+                metric.d_gamma11_dr = 2.0 * (r * (M * r - a2) + a2 * (r - M) * cth2) /
                     square(metric.rho2);
                 
                 metric.d_gamma22_dr = -2.0 * r / square(metric.rho2);
@@ -230,26 +232,33 @@ class DiskVisualization {
             fn geodesicDerivatives(state: GeodesicState, a: f32, M: f32) -> GeodesicState {
                 let metric = computeMetric(state.r, state.theta, a, M);
                 let u_0 = u0(metric, state.ur, state.utheta, state.uphi);
+                let inv_u0 = 1.0 / u_0;
+                let inv_2u0 = 1.0 / (2.0 * u_0);
                 
                 var derivs: GeodesicState;
                 
-                // Position derivatives
-                derivs.r = metric.gamma11 * state.ur / u_0;
-                derivs.theta = metric.gamma22 * state.utheta / u_0;
-                derivs.phi = metric.gamma33 * state.uphi / u_0 - metric.beta3;
+                // Position derivatives - precompute inverse
+                derivs.r = metric.gamma11 * state.ur * inv_u0;
+                derivs.theta = metric.gamma22 * state.utheta * inv_u0;
+                derivs.phi = metric.gamma33 * state.uphi * inv_u0 - metric.beta3;
+                
+                // Precompute squared momentum terms
+                let ur2 = state.ur * state.ur;
+                let utheta2 = state.utheta * state.utheta;
+                let uphi2 = state.uphi * state.uphi;
                 
                 // Momentum derivatives from geodesic equation
                 derivs.ur = -metric.alpha * u_0 * metric.d_alpha_dr +
                            state.uphi * metric.d_beta3_dr -
-                           (square(state.ur) * metric.d_gamma11_dr +
-                            square(state.utheta) * metric.d_gamma22_dr +
-                            square(state.uphi) * metric.d_gamma33_dr) / (2.0 * u_0);
+                           (ur2 * metric.d_gamma11_dr +
+                            utheta2 * metric.d_gamma22_dr +
+                            uphi2 * metric.d_gamma33_dr) * inv_2u0;
                 
                 derivs.utheta = -metric.alpha * u_0 * metric.d_alpha_dth +
                                state.uphi * metric.d_beta3_dth -
-                               (square(state.ur) * metric.d_gamma11_dth +
-                                square(state.utheta) * metric.d_gamma22_dth +
-                                square(state.uphi) * metric.d_gamma33_dth) / (2.0 * u_0);
+                               (ur2 * metric.d_gamma11_dth +
+                                utheta2 * metric.d_gamma22_dth +
+                                uphi2 * metric.d_gamma33_dth) * inv_2u0;
                 
                 derivs.uphi = 0.0; // Conserved quantity
                 
@@ -295,46 +304,46 @@ class DiskVisualization {
                 
                 // RK45 Dormand-Prince integration with adaptive stepping
                 var h = 0.1; // Initial step size
-                let atol = 1e-6;
-                let rtol = 1e-6;
-                let hmin = 1e-4;
-                let hmax = 2.0;
-                let maxSteps = 10000;
+                let atol = 1e-5;
+                let rtol = 1e-5;
+                let hmin = 1e-3;
+                let hmax = 10.0;
+                let maxSteps = 1000;
                 
-                // RK45 Dormand-Prince coefficients
-                let c2 = 1.0 / 5.0;
-                let c3 = 3.0 / 10.0;
-                let c4 = 4.0 / 5.0;
-                let c5 = 8.0 / 9.0;
+                // Precomputed RK45 Dormand-Prince coefficients (stored once)
+                const c2 = 0.2;
+                const c3 = 0.3;
+                const c4 = 0.8;
+                const c5 = 0.888888888889;
                 
-                let a21 = 1.0 / 5.0;
-                let a31 = 3.0 / 40.0;
-                let a32 = 9.0 / 40.0;
-                let a41 = 44.0 / 45.0;
-                let a42 = -56.0 / 15.0;
-                let a43 = 32.0 / 9.0;
-                let a51 = 19372.0 / 6561.0;
-                let a52 = -25360.0 / 2187.0;
-                let a53 = 64448.0 / 6561.0;
-                let a54 = -212.0 / 729.0;
-                let a61 = 9017.0 / 3168.0;
-                let a62 = -355.0 / 33.0;
-                let a63 = 46732.0 / 5247.0;
-                let a64 = 49.0 / 176.0;
-                let a65 = -5103.0 / 18656.0;
+                const a21 = 0.2;
+                const a31 = 0.075;
+                const a32 = 0.225;
+                const a41 = 0.977777777778;
+                const a42 = -3.733333333333;
+                const a43 = 3.555555555556;
+                const a51 = 2.952598689758;
+                const a52 = -11.595793324188;
+                const a53 = 9.822892851699;
+                const a54 = -0.290793779983;
+                const a61 = 2.846275252525;
+                const a62 = -10.757575757576;
+                const a63 = 8.906422717744;
+                const a64 = 0.278267045455;
+                const a65 = -0.273459052841;
                 
-                let a71 = 35.0 / 384.0;
-                let a73 = 500.0 / 1113.0;
-                let a74 = 125.0 / 192.0;
-                let a75 = -2187.0 / 6784.0;
-                let a76 = 11.0 / 84.0;
+                const a71 = 0.091145833333;
+                const a73 = 0.449236298936;
+                const a74 = 0.651041666667;
+                const a75 = -0.322376179245;
+                const a76 = 0.130952380952;
                 
-                let e1 = 71.0 / 57600.0;
-                let e3 = -71.0 / 16695.0;
-                let e4 = 71.0 / 1920.0;
-                let e5 = -17253.0 / 339200.0;
-                let e6 = 22.0 / 525.0;
-                let e7 = -1.0 / 40.0;
+                const e1 = 0.001234567901;
+                const e3 = -0.004259930906;
+                const e4 = 0.036979166667;
+                const e5 = -0.050867449137;
+                const e6 = 0.041904761905;
+                const e7 = -0.025;
                 
                 var k1 = geodesicDerivatives(state, a, M);
                 var err_prev = 1.0;
@@ -419,7 +428,7 @@ class DiskVisualization {
                         k1 = k7;
                         err_prev = err;
                         
-                        // Check stopping conditions
+                        // Early termination conditions for performance
                         if (state.r < rs * 1.01) {
                             return false; // Hit event horizon
                         }
@@ -428,7 +437,12 @@ class DiskVisualization {
                             return false; // Escaped to infinity
                         }
                         
+                        // Early exit if ray is moving away from disk plane and far from it
                         let currentZ = state.r * cos(state.theta);
+                        // let zVelocity = state.r * (-sin(state.theta)) * state.utheta + cos(state.theta) * state.ur;
+                        // if (abs(currentZ) > diskRadius * 2.0 && zVelocity * currentZ > 0.0) {
+                            // return false; // Moving away from disk, won't hit
+                        // }
                         
                         // Check for disk crossing
                         if (prevZ * currentZ < 0.0 && state.r >= innerRadius && state.r <= diskRadius) {
@@ -456,8 +470,8 @@ class DiskVisualization {
             
             @fragment
             fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
-                // Block-based rendering - compute only every 8th pixel, use for entire 8x8 block
-                let blockSize = 8;
+                // Block-based rendering - compute only every nth pixel, use for entire block
+                let blockSize = 16;
                 let pixelX = i32(fragCoord.x);
                 let pixelY = i32(fragCoord.y);
                 let blockX = (pixelX / blockSize) * blockSize;
@@ -469,7 +483,7 @@ class DiskVisualization {
                 
                 let blockScreenPos = vec2<f32>(
                     (centerX / uniforms.screenWidth) * 2.0 - 1.0,
-                    1.0 - (centerY / uniforms.screenHeight) * 2.0
+                    (centerY / uniforms.screenHeight) * 2.0 - 1.0
                 );
                 
                 // Use block center for ray computation
@@ -482,36 +496,13 @@ class DiskVisualization {
                 let viewMatrixInv = transpose(uniforms.viewMatrix);
                 let rayDir = normalize((viewMatrixInv * vec4<f32>(rayDirLocal, 0.0)).xyz);
                 
-                // Test center region with GR, outer with classical (use original pixel for region test)
-                let screenPos = vec2<f32>(
-                    (fragCoord.x / uniforms.screenWidth) * 2.0 - 1.0,
-                    1.0 - (fragCoord.y / uniforms.screenHeight) * 2.0
-                );
-                
-                if (length(blockScreenPos) < 0.3) {
-                    // Center region: test GR
-                    let grHit = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 2.0);
-                    if (grHit) {
-                        return vec4<f32>(1.0, 0.0, 1.0, 1.0); // Magenta for GR hit
-                    } else {
-                        return vec4<f32>(0.0, 0.0, 1.0, 1.0); // Blue for GR miss
-                    }
+                // General relativistic ray tracing for entire screen
+                let grHit = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 2.0);
+                if (grHit) {
+                    return vec4<f32>(1.0, 0.2, 0.2, 1.0); // Red for disk hit
                 } else {
-                    // Outer region: classical ray tracing
-                    if (abs(rayDir.z) > 0.0001) {
-                        let t = -uniforms.cameraPos.z / rayDir.z;
-                        if (t > 0.0) {
-                            let hitPoint = uniforms.cameraPos + t * rayDir;
-                            let distFromCenter = length(hitPoint.xy);
-                            
-                            if (distFromCenter <= uniforms.diskRadius && distFromCenter >= uniforms.innerRadius) {
-                                return vec4<f32>(0.0, 1.0, 0.0, 1.0); // Green for classical hit
-                            }
-                        }
-                    }
+                    return vec4<f32>(0.0, 0.0, 0.0, 1.0); // Black background
                 }
-                
-                return vec4<f32>(0.0, 0.0, 0.0, 1.0); // Black background
             }
         `;
         
