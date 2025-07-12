@@ -7,6 +7,11 @@ class DiskVisualization {
         this.uniformBuffer = null;
         this.bindGroup = null;
         
+        // Performance monitoring
+        this.frameCount = 0;
+        this.lastFrameTime = performance.now();
+        this.fpsDisplay = null;
+        
         this.diskRadius = 20.0;
         this.innerRadius = 5.0;
         this.observerDistance = 35.0;
@@ -36,6 +41,38 @@ class DiskVisualization {
         document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(1);
     }
     
+    setupPerformanceMonitoring() {
+        // Create FPS display element
+        this.fpsDisplay = document.createElement('div');
+        this.fpsDisplay.style.cssText = `
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 3px;
+        `;
+        this.fpsDisplay.textContent = 'FPS: --';
+        document.body.appendChild(this.fpsDisplay);
+    }
+    
+    updatePerformanceStats() {
+        this.frameCount++;
+        const currentTime = performance.now();
+        const deltaTime = currentTime - this.lastFrameTime;
+        
+        // Update FPS every 60 frames
+        if (this.frameCount % 60 === 0) {
+            const fps = (60 * 1000 / deltaTime).toFixed(1);
+            const frameTime = (deltaTime / 60).toFixed(2);
+            this.fpsDisplay.textContent = `FPS: ${fps} (${frameTime}ms/frame)`;
+            this.lastFrameTime = currentTime;
+        }
+    }
+    
     async init() {
         try {
             await this.initWebGPU();
@@ -43,6 +80,7 @@ class DiskVisualization {
             this.createRenderPipeline();
             this.createUniformBuffer();
             this.updateUI();
+            this.setupPerformanceMonitoring();
             this.render();
         } catch (error) {
             console.error('Failed to initialize WebGPU:', error);
@@ -550,10 +588,13 @@ class DiskVisualization {
     }
     
     createUniformBuffer() {
-        const uniformBufferSize = 4 * 4 + 4 * 8 + 4 * 16;
+        // Optimized uniform buffer layout with proper 16-byte alignment
+        // Layout: vec3 cameraPos (12 bytes + 4 padding), 5 floats (20 bytes + 12 padding), mat4x4 (64 bytes)
+        const uniformBufferSize = 16 + 32 + 64; // 112 bytes total, properly aligned
         this.uniformBuffer = this.device.createBuffer({
             size: uniformBufferSize,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: false,
         });
         
         this.bindGroup = this.device.createBindGroup({
@@ -562,6 +603,8 @@ class DiskVisualization {
                 binding: 0,
                 resource: {
                     buffer: this.uniformBuffer,
+                    offset: 0,
+                    size: uniformBufferSize,
                 },
             }],
         });
@@ -578,13 +621,16 @@ class DiskVisualization {
         
         const viewMatrix = this.lookAt(eye, center, up);
         
-        const uniformData = new Float32Array(4 + 8 + 16);
+        // Optimized uniform buffer layout with proper alignment
+        const uniformData = new Float32Array(28); // 112 bytes / 4 = 28 floats
         
+        // vec3 cameraPos + padding (16 bytes)
         uniformData[0] = x;
         uniformData[1] = y;
         uniformData[2] = z;
-        uniformData[3] = 0;
+        uniformData[3] = 0; // padding
         
+        // 8 floats with padding to align to 16-byte boundary (32 bytes)
         uniformData[4] = this.diskRadius;
         uniformData[5] = this.innerRadius;
         uniformData[6] = this.blackHoleMass;
@@ -592,8 +638,9 @@ class DiskVisualization {
         uniformData[8] = this.canvas.width;
         uniformData[9] = this.canvas.height;
         uniformData[10] = this.observerDistance;
-        uniformData[11] = 0;
+        uniformData[11] = 0; // padding
         
+        // mat4x4 viewMatrix (64 bytes) 
         for (let i = 0; i < 16; i++) {
             uniformData[12 + i] = viewMatrix[i];
         }
@@ -688,6 +735,7 @@ class DiskVisualization {
     
     render() {
         this.updateCamera();
+        this.updatePerformanceStats();
         
         const commandEncoder = this.device.createCommandEncoder();
         const textureView = this.context.getCurrentTexture().createView();
