@@ -313,6 +313,30 @@ class DiskVisualization {
                     return false;
                 }
                 
+                // Calculate impact parameter
+                let rayOriginNorm = normalize(rayOrigin);
+                let perpComponent = rayOrigin - dot(rayOrigin, rayDir) * rayDir;
+                let impactParameter = length(perpComponent);
+                
+                // Use flat spacetime approximation for large impact parameters
+                if (impactParameter > 4.0 * rs) {
+                    // Simple ray-disk intersection in flat spacetime
+                    // Check if ray intersects z=0 plane
+                    if (abs(rayDir.z) < 1e-10) {
+                        return false; // Ray parallel to disk
+                    }
+                    
+                    let t = -rayOrigin.z / rayDir.z;
+                    if (t <= 0.0) {
+                        return false; // Intersection behind observer
+                    }
+                    
+                    let intersectionPoint = rayOrigin + t * rayDir;
+                    let r = length(intersectionPoint.xy);
+                    
+                    return r >= innerRadius && r <= diskRadius;
+                }
+                
                 // Initial conditions for geodesic
                 var state: GeodesicState;
                 state.r = r0;
@@ -509,7 +533,7 @@ class DiskVisualization {
             @fragment
             fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
                 // Block-based rendering - compute only every nth pixel, use for entire block
-                let blockSize = 16;
+                let blockSize = 8; // Reduced from 16 for better quality
                 let pixelX = i32(fragCoord.x);
                 let pixelY = i32(fragCoord.y);
                 let blockX = (pixelX / blockSize) * blockSize;
