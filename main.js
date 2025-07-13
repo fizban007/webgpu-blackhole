@@ -27,7 +27,7 @@ class DiskVisualization {
         
         this.camera = {
             theta: 0,
-            phi: Math.PI / 3,
+            phi: 2.0 * Math.PI / 3,
             radius: this.observerDistance
         };
         
