@@ -14,13 +14,13 @@ class DiskVisualization {
         
         this.diskRadius = 20.0;
         this.innerRadius = 5.0;
-        this.observerDistance = 35.0;
+        this.observerDistance = 100.0;
         this.blackHoleMass = 1.0;
         this.blackHoleSpin = 0.0;
         
         this.camera = {
             theta: 0,
-            phi: 2.0 * Math.PI / 3,
+            phi: 0.95 * Math.PI / 2,
             radius: this.observerDistance
         };
         
@@ -319,24 +319,24 @@ class DiskVisualization {
                 let impactParameter = length(perpComponent);
                 
                 // Use flat spacetime approximation for large impact parameters
-                if (impactParameter > 4.0 * rs) {
+                if (impactParameter > 6.0 * rs) {
                     // Simple ray-disk intersection in flat spacetime
                     // Check if ray intersects z=0 plane
                     if (abs(rayDir.z) < 1e-10) {
                         return false; // Ray parallel to disk
                     }
-                    
+
                     let t = -rayOrigin.z / rayDir.z;
                     if (t <= 0.0) {
                         return false; // Intersection behind observer
                     }
-                    
+
                     let intersectionPoint = rayOrigin + t * rayDir;
                     let r = length(intersectionPoint.xy);
-                    
+
                     return r >= innerRadius && r <= diskRadius;
                 }
-                
+
                 // Initial conditions for geodesic
                 var state: GeodesicState;
                 state.r = r0;
@@ -368,9 +368,9 @@ class DiskVisualization {
                 var h = 0.1; // Initial step size
                 let atol = 1e-5;
                 let rtol = 1e-5;
-                let hmin = 1e-3;
-                let hmax = 10.0;
-                let maxSteps = 1000;
+                let hmin = 1e-2;
+                let hmax = 2.0;
+                let maxSteps = 5000;
                 
                 // Precomputed RK45 Dormand-Prince coefficients (stored once)
                 const c2 = 0.2;
@@ -501,11 +501,14 @@ class DiskVisualization {
                         
                         // Early exit if ray is moving away from disk plane and far from it
                         let currentZ = state.r * cos(state.theta);
+                        if (state.ur > 0 && state.r > diskRadius * 2.0) {
+                          return false; // Moving away from the black hole, won't hit
+                        }
                         // let zVelocity = state.r * (-sin(state.theta)) * state.utheta + cos(state.theta) * state.ur;
                         // if (abs(currentZ) > diskRadius * 2.0 && zVelocity * currentZ > 0.0) {
                             // return false; // Moving away from disk, won't hit
                         // }
-                        
+
                         // Check for disk crossing
                         if (prevZ * currentZ < 0.0 && state.r >= innerRadius && state.r <= diskRadius) {
                             return true;
