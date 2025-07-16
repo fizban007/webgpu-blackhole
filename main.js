@@ -38,7 +38,12 @@ class DiskVisualization {
         document.getElementById('innerRadius').textContent = this.innerRadius.toFixed(1);
         document.getElementById('distance').textContent = this.observerDistance.toFixed(1);
         document.getElementById('mass').textContent = this.blackHoleMass.toFixed(1);
-        document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(1);
+        document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(3);
+        
+        // Update slider values to match
+        document.getElementById('spinSlider').value = this.blackHoleSpin;
+        document.getElementById('innerRadiusSlider').value = this.innerRadius;
+        document.getElementById('outerRadiusSlider').value = this.diskRadius;
     }
     
     setupPerformanceMonitoring() {
@@ -311,7 +316,47 @@ class DiskVisualization {
             this.observerDistance = this.camera.radius;
             this.updateUI();
         });
+
+        // Keyboard controls for parameters
+        window.addEventListener('keydown', (e) => {
+            let updated = false;
+            switch(e.key.toLowerCase()) {
+                case 's':
+                    this.blackHoleSpin = Math.min(0.998, this.blackHoleSpin + 0.05);
+                    document.getElementById('spinSlider').value = this.blackHoleSpin;
+                    updated = true;
+                    break;
+                case 'x':
+                    this.blackHoleSpin = Math.max(-0.998, this.blackHoleSpin - 0.05);
+                    document.getElementById('spinSlider').value = this.blackHoleSpin;
+                    updated = true;
+                    break;
+            }
+            if (updated) {
+                this.updateUI();
+            }
+        });
         
+        // Slider controls
+        const spinSlider = document.getElementById('spinSlider');
+        const innerRadiusSlider = document.getElementById('innerRadiusSlider');
+        const outerRadiusSlider = document.getElementById('outerRadiusSlider');
+        
+        spinSlider.addEventListener('input', (e) => {
+            this.blackHoleSpin = parseFloat(e.target.value);
+            document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(3);
+        });
+        
+        innerRadiusSlider.addEventListener('input', (e) => {
+            this.innerRadius = parseFloat(e.target.value);
+            document.getElementById('innerRadius').textContent = this.innerRadius.toFixed(1);
+        });
+        
+        outerRadiusSlider.addEventListener('input', (e) => {
+            this.diskRadius = parseFloat(e.target.value);
+            document.getElementById('radius').textContent = this.diskRadius.toFixed(1);
+        });
+
         window.addEventListener('resize', () => {
             this.resizeCanvas();
         });
