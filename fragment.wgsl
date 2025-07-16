@@ -581,7 +581,7 @@ fn fs_main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
     
     // Create color variations - hot accretion disk
     let heat = 0.7 + turbulence * 0.3;
-    let baseColor = vec3<f32>(heat * 1.2, heat * 0.5, heat * 0.1);
+    let baseColor = vec3<f32>(heat * 1.2, heat * 0.2, heat * 0.1);
     
     // Add bright hot spots with more complex patterns
     let hotSpots1 = max(0.0, noise1 - 0.4) * 1.5;
