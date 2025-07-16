@@ -45,6 +45,112 @@ struct BoyerLindquistMetric {
 fn square(x: f32) -> f32 { return x * x; }
 fn cube(x: f32) -> f32 { return x * x * x; }
 
+// Simplex noise functions for disk texture
+fn mod289(x: vec3<f32>) -> vec3<f32> {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+fn mod289_2(x: vec2<f32>) -> vec2<f32> {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+fn permute(x: vec3<f32>) -> vec3<f32> {
+    return mod289(((x * 34.0) + 10.0) * x);
+}
+
+fn simplexNoise2D(v: vec2<f32>) -> f32 {
+    let C = vec4<f32>(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+    
+    var i = floor(v + dot(v, C.yy));
+    let x0 = v - i + dot(i, C.xx);
+    
+    var i1: vec2<f32>;
+    if (x0.x > x0.y) {
+        i1 = vec2<f32>(1.0, 0.0);
+    } else {
+        i1 = vec2<f32>(0.0, 1.0);
+    }
+    
+    var x12 = x0.xyxy + C.xxzz;
+    x12.x = x12.x - i1.x;
+    x12.y = x12.y - i1.y;
+    
+    i = mod289_2(i);
+    let p = permute(permute(i.y + vec3<f32>(0.0, i1.y, 1.0)) + i.x + vec3<f32>(0.0, i1.x, 1.0));
+    
+    var m = max(vec3<f32>(0.5) - vec3<f32>(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)), vec3<f32>(0.0));
+    m = m * m;
+    m = m * m;
+    
+    let x = 2.0 * fract(p * C.www) - 1.0;
+    let h = abs(x) - 0.5;
+    let ox = floor(x + 0.5);
+    let a0 = x - ox;
+    
+    m = m * (1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h));
+    
+    let g = vec3<f32>(
+        a0.x * x0.x + h.x * x0.y,
+        a0.y * x12.x + h.y * x12.y,
+        a0.z * x12.z + h.z * x12.w
+    );
+    
+    return 130.0 * dot(m, g);
+}
+
+// Fractal noise for more detail
+fn fractalNoise(p: vec2<f32>, octaves: i32) -> f32 {
+    var value = 0.0;
+    var amplitude = 1.0;
+    var frequency = 1.0;
+    var maxValue = 0.0;
+    
+    for (var i = 0; i < octaves; i++) {
+        value += simplexNoise2D(p * frequency) * amplitude;
+        maxValue += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    return value / maxValue;
+}
+
+// Periodic noise using sine/cosine for seamless wrapping
+fn periodicNoise2D(p: vec2<f32>, period: vec2<f32>) -> f32 {
+    // Convert to periodic coordinates
+    let theta = p * 6.28318530718 / period;
+    
+    // 4D coordinates for seamless tiling
+    let nx = cos(theta.x);
+    let ny = sin(theta.x);
+    let nz = cos(theta.y);
+    let nw = sin(theta.y);
+    
+    // Sample 4D noise at these coordinates
+    let a = simplexNoise2D(vec2<f32>(nx, nz));
+    let b = simplexNoise2D(vec2<f32>(ny, nw));
+    let c = simplexNoise2D(vec2<f32>(nx + ny, nz + nw));
+    
+    return (a + b + c) / 3.0;
+}
+
+// Fractal periodic noise
+fn fractalPeriodicNoise(p: vec2<f32>, period: vec2<f32>, octaves: i32) -> f32 {
+    var value = 0.0;
+    var amplitude = 1.0;
+    var frequency = 1.0;
+    var maxValue = 0.0;
+    
+    for (var i = 0; i < octaves; i++) {
+        value += periodicNoise2D(p * frequency, period * frequency) * amplitude;
+        maxValue += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    return value / maxValue;
+}
+
 fn computeMetric(r: f32, th: f32, a: f32, M: f32) -> BoyerLindquistMetric {
   var metric: BoyerLindquistMetric;
   metric.a = a;
@@ -135,6 +241,12 @@ struct GeodesicState {
     uphi: f32,
 }
 
+struct DiskHit {
+    hit: bool,
+    r: f32,
+    phi: f32,
+}
+
 fn geodesicDerivatives(state: GeodesicState, a: f32, M: f32) -> GeodesicState {
   let metric = computeMetric(state.r, state.theta, a, M);
   let u_0 = u0(metric, state.ur, state.utheta, state.uphi);
@@ -171,14 +283,19 @@ fn geodesicDerivatives(state: GeodesicState, a: f32, M: f32) -> GeodesicState {
   return derivs;
 }
 
-fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> bool {
+fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> DiskHit {
   let r0 = length(rayOrigin);
   let theta0 = acos(clamp(rayOrigin.z / r0, -1.0, 1.0));
   let phi0 = atan2(rayOrigin.y, rayOrigin.x);
     
+  var result: DiskHit;
+  result.hit = false;
+  result.r = 0.0;
+  result.phi = 0.0;
+  
   let rs = M + sqrt(M * M - a * a); // Event horizon
   if (r0 < rs * 1.01) {
-    return false;
+    return result;
   }
     
   // Calculate impact parameter
@@ -188,7 +305,7 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
 
   // Check if the ray is too far from the disk or too close to the black hole
   if (impactParameter > diskRadius * 1.1) {
-    return false; // Too far from the disk
+    return result; // Too far from the disk
   }
 
   // Initial conditions for geodesic
@@ -217,8 +334,8 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
   state.ur = rdot / normalization * sqrt(metric.g_11);
   state.utheta = thetadot / normalization * sqrt(metric.g_22);
   state.uphi = phidot / normalization * sqrt(metric.g_33);
-  if (abs(state.uphi) < 1e-2) {
-    state.uphi = 1e-2 * sign(state.uphi); // Prevent zero momentum in phi direction
+  if (abs(state.uphi) < 2e-3) {
+    state.uphi = 2e-3 * sign(state.uphi); // Prevent zero momentum in phi direction
   }
     
   // RK45 Dormand-Prince integration with adaptive stepping
@@ -349,17 +466,17 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
             
       // Early termination conditions for performance
       if (state.r < rs * 1.01) {
-        return false; // Hit event horizon
+        return result; // Hit event horizon
       }
             
       if (state.r > maxDistance) {
-        return false; // Escaped to infinity
+        return result; // Escaped to infinity
       }
             
       // Early exit if ray is moving away from disk plane and far from it
       let currentZ = state.r * cos(state.theta);
       if (state.ur > 0 && state.r > diskRadius * 1.2) {
-        return false; // Moving away from the black hole, won't hit
+        return result; // Moving away from the black hole, won't hit
       }
 
       // Check for disk crossing
@@ -377,7 +494,10 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
         
         // Check if the crossing point is within the disk bounds
         if (cylindricalRadius >= innerRadius && cylindricalRadius <= diskRadius) {
-          return true;
+          result.hit = true;
+          result.r = cylindricalRadius;
+          result.phi = crossingPhi;
+          return result;
         }
       }
     }
@@ -397,7 +517,7 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
     h = min(h, hmax);
   }
     
-  return false;
+  return result;
 }
 
 
@@ -430,9 +550,52 @@ fn fs_main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
   let rayDir = normalize((viewMatrixInv * vec4<f32>(rayDirLocal, 0.0)).xyz);
     
   // General relativistic ray tracing for entire screen
-  let grHit = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
-  if (grHit) {
-    return vec4<f32>(1.0, 0.2, 0.2, 1.0); // Red for disk hit
+  let diskHit = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
+  
+  if (diskHit.hit) {
+    // Create texture coordinates from hit position
+    // Scale phi to [0, 1] range for periodic wrapping
+    let phiNormalized = (diskHit.phi + 3.14159265359) / 6.28318530718;
+    let texCoord = vec2<f32>(diskHit.r * 0.2, phiNormalized);
+    
+    // Multiple periods for different frequency components
+    let period1 = vec2<f32>(20.0, 1.0);  // Medium radial period
+    let period2 = vec2<f32>(8.0, 1.0);   // Smaller radial period
+    let period3 = vec2<f32>(3.0, 1.0);   // Fine radial details
+    
+    // Generate multiple octaves of periodic noise with different radial scales
+    let noise1 = fractalPeriodicNoise(texCoord * 2.0, period1, 4);
+    let noise2 = fractalPeriodicNoise(texCoord * 5.0, period2, 3);
+    let noise3 = fractalPeriodicNoise(texCoord * 15.0, period3, 2);
+    let noise4 = periodicNoise2D(texCoord * 40.0, vec2<f32>(1.5, 1.0));
+    
+    // Create spiral patterns by mixing radial and angular components
+    let spiralCoord = vec2<f32>(diskHit.r * 0.15, phiNormalized * 3.0 + diskHit.r * 0.1);
+    let spiralNoise = fractalPeriodicNoise(spiralCoord, vec2<f32>(10.0, 1.0), 3);
+    
+    // Radial turbulence with fractal characteristics
+    let radialTurbulence = fractalNoise(vec2<f32>(diskHit.r * 0.3, phiNormalized * 10.0), 4);
+    
+    // Combine noises for complex, fractal-like texture
+    let turbulence = noise1 * 0.3 + noise2 * 0.25 + noise3 * 0.2 + noise4 * 0.15 + spiralNoise * 0.05 + radialTurbulence * 0.05;
+    
+    // Create color variations - hot accretion disk
+    let heat = 0.7 + turbulence * 0.3;
+    let baseColor = vec3<f32>(heat * 1.2, heat * 0.5, heat * 0.1);
+    
+    // Add bright hot spots with more complex patterns
+    let hotSpots1 = max(0.0, noise1 - 0.4) * 1.5;
+    let hotSpots2 = max(0.0, noise2 - 0.5) * 1.0;
+    let hotSpots3 = max(0.0, spiralNoise - 0.3) * 0.8;
+    let totalHotSpots = hotSpots1 + hotSpots2 + hotSpots3;
+    
+    let color = baseColor + vec3<f32>(totalHotSpots, totalHotSpots * 0.7, totalHotSpots * 0.2);
+    
+    // Radial falloff for more realistic appearance
+    let radialFactor = 1.0 - pow((diskHit.r - uniforms.innerRadius) / (uniforms.diskRadius - uniforms.innerRadius), 2.0);
+    let finalColor = color * (0.5 + radialFactor * 0.5);
+    
+    return vec4<f32>(finalColor, 1.0);
   } else {
     return vec4<f32>(0.0, 0.0, 0.0, 1.0); // Black background
   }

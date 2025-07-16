@@ -300,7 +300,7 @@ class DiskVisualization {
             const deltaX = e.clientX - this.mouseState.lastX;
             const deltaY = e.clientY - this.mouseState.lastY;
             
-            this.camera.theta += deltaX * 0.01;
+            this.camera.theta -= deltaX * 0.01;
             this.camera.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.camera.phi - deltaY * 0.004));
             
             this.mouseState.lastX = e.clientX;
