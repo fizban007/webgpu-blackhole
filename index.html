@@ -73,6 +73,12 @@
             cursor: pointer;
             border-radius: 50%;
         }
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
         .info-text {
             margin-top: 10px;
             font-size: 11px;
@@ -97,6 +103,11 @@
             <label for="outerRadiusSlider">Outer radius:</label>
             <input type="range" id="outerRadiusSlider" min="10" max="40" step="0.5" value="20">
             <span id="radius">20.0</span>
+        </div>
+        <div class="control-group">
+            <label for="volumetricToggle">Volumetric clouds:</label>
+            <input type="checkbox" id="volumetricToggle" checked>
+            <span id="volumetricStatus">ON</span>
         </div>
         <div class="control-group">
             <label>Observer distance:</label>

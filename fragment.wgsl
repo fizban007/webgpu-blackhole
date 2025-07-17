@@ -8,7 +8,7 @@ struct Uniforms {
     screenWidth: f32,
     screenHeight: f32,
     observerDistance: f32,
-    padding2: f32,
+    volumetricMode: f32, // 0.0 = thin disk, 1.0 = volumetric
     viewMatrix: mat4x4<f32>,
 }
 
@@ -347,7 +347,252 @@ fn getDiskDensity(r: f32, z: f32, phi: f32, innerRadius: f32, outerRadius: f32) 
     return sample;
 }
 
-fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> vec4<f32> {
+fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> vec4<f32> {
+  let r0 = length(rayOrigin);
+  let theta0 = acos(clamp(rayOrigin.z / r0, -1.0, 1.0));
+  let phi0 = atan2(rayOrigin.y, rayOrigin.x);
+  
+  let rs = M + sqrt(M * M - a * a); // Event horizon
+  if (r0 < rs * 1.01) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  }
+  
+  // Calculate impact parameter
+  let t_closest = -dot(rayOrigin, rayDir);
+  let closestPoint = rayOrigin + t_closest * rayDir;
+  let impactParameter = length(closestPoint);
+
+  // Check if the ray is too far from the disk
+  if (impactParameter > diskRadius * 1.1) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  }
+
+  // Initial conditions for geodesic
+  var state: GeodesicState;
+  state.r = r0;
+  state.theta = theta0;
+  state.phi = phi0;
+  
+  let metric = computeMetric(r0, theta0, a, M);
+  
+  // Better initial momentum setup
+  var sth0 = sin(theta0);
+  if (sth0 < 1e-10) { sth0 = 1e-10; }
+  
+  let r_hat = normalize(rayOrigin);
+  let theta_hat = vec3<f32>(-r_hat.z * r_hat.x, -r_hat.z * r_hat.y, r_hat.x * r_hat.x + r_hat.y * r_hat.y) / sqrt(r_hat.x * r_hat.x + r_hat.y * r_hat.y + 1e-10);
+  let phi_hat = vec3<f32>(-r_hat.y, r_hat.x, 0.0) / sqrt(r_hat.x * r_hat.x + r_hat.y * r_hat.y + 1e-10);
+  
+  let rdot = dot(rayDir, r_hat);
+  let thetadot = dot(rayDir, theta_hat);
+  let phidot = dot(rayDir, phi_hat);
+  
+  let normalization = sqrt(metric.g_11 * rdot * rdot + metric.g_22 * thetadot * thetadot + metric.g_33 * phidot * phidot);
+  state.ur = rdot / normalization * sqrt(metric.g_11);
+  state.utheta = thetadot / normalization * sqrt(metric.g_22);
+  state.uphi = phidot / normalization * sqrt(metric.g_33);
+  if (abs(state.uphi) < 2e-3) {
+    state.uphi = 2e-3 * sign(state.uphi);
+  }
+  
+  // RK45 Dormand-Prince integration for thin disk
+  var h = 0.2;
+  let atol = 1e-4;
+  let rtol = 1e-4;
+  let hmin = 1e-2;
+  let hmax = 1.0;
+  let maxSteps = 5000;
+  
+  // Precomputed RK45 Dormand-Prince coefficients
+  const a21 = 0.2;
+  const a31 = 0.075;
+  const a32 = 0.225;
+  const a41 = 0.977777777778;
+  const a42 = -3.733333333333;
+  const a43 = 3.555555555556;
+  const a51 = 2.952598689758;
+  const a52 = -11.595793324188;
+  const a53 = 9.822892851699;
+  const a54 = -0.290793779983;
+  const a61 = 2.846275252525;
+  const a62 = -10.757575757576;
+  const a63 = 8.906422717744;
+  const a64 = 0.278267045455;
+  const a65 = -0.273459052841;
+  const a71 = 0.091145833333;
+  const a73 = 0.449236298936;
+  const a74 = 0.651041666667;
+  const a75 = -0.322376179245;
+  const a76 = 0.130952380952;
+  const e1 = 0.001234567901;
+  const e3 = -0.004259930906;
+  const e4 = 0.036979166667;
+  const e5 = -0.050867449137;
+  const e6 = 0.041904761905;
+  const e7 = -0.025;
+  
+  var k1 = geodesicDerivatives(state, a, M);
+  var err_prev = 1.0;
+  
+  for (var step = 0; step < maxSteps; step++) {
+    let prevZ = state.r * cos(state.theta);
+    
+    // RK45 step
+    var temp: GeodesicState;
+    temp.r = state.r + h * a21 * k1.r;
+    temp.theta = state.theta + h * a21 * k1.theta;
+    temp.phi = state.phi + h * a21 * k1.phi;
+    temp.ur = state.ur + h * a21 * k1.ur;
+    temp.utheta = state.utheta + h * a21 * k1.utheta;
+    temp.uphi = state.uphi + h * a21 * k1.uphi;
+    let k2 = geodesicDerivatives(temp, a, M);
+    
+    temp.r = state.r + h * (a31 * k1.r + a32 * k2.r);
+    temp.theta = state.theta + h * (a31 * k1.theta + a32 * k2.theta);
+    temp.phi = state.phi + h * (a31 * k1.phi + a32 * k2.phi);
+    temp.ur = state.ur + h * (a31 * k1.ur + a32 * k2.ur);
+    temp.utheta = state.utheta + h * (a31 * k1.utheta + a32 * k2.utheta);
+    temp.uphi = state.uphi + h * (a31 * k1.uphi + a32 * k2.uphi);
+    let k3 = geodesicDerivatives(temp, a, M);
+    
+    temp.r = state.r + h * (a41 * k1.r + a42 * k2.r + a43 * k3.r);
+    temp.theta = state.theta + h * (a41 * k1.theta + a42 * k2.theta + a43 * k3.theta);
+    temp.phi = state.phi + h * (a41 * k1.phi + a42 * k2.phi + a43 * k3.phi);
+    temp.ur = state.ur + h * (a41 * k1.ur + a42 * k2.ur + a43 * k3.ur);
+    temp.utheta = state.utheta + h * (a41 * k1.utheta + a42 * k2.utheta + a43 * k3.utheta);
+    temp.uphi = state.uphi + h * (a41 * k1.uphi + a42 * k2.uphi + a43 * k3.uphi);
+    let k4 = geodesicDerivatives(temp, a, M);
+    
+    temp.r = state.r + h * (a51 * k1.r + a52 * k2.r + a53 * k3.r + a54 * k4.r);
+    temp.theta = state.theta + h * (a51 * k1.theta + a52 * k2.theta + a53 * k3.theta + a54 * k4.theta);
+    temp.phi = state.phi + h * (a51 * k1.phi + a52 * k2.phi + a53 * k3.phi + a54 * k4.phi);
+    temp.ur = state.ur + h * (a51 * k1.ur + a52 * k2.ur + a53 * k3.ur + a54 * k4.ur);
+    temp.utheta = state.utheta + h * (a51 * k1.utheta + a52 * k2.utheta + a53 * k3.utheta + a54 * k4.utheta);
+    temp.uphi = state.uphi + h * (a51 * k1.uphi + a52 * k2.uphi + a53 * k3.uphi + a54 * k4.uphi);
+    let k5 = geodesicDerivatives(temp, a, M);
+    
+    temp.r = state.r + h * (a61 * k1.r + a62 * k2.r + a63 * k3.r + a64 * k4.r + a65 * k5.r);
+    temp.theta = state.theta + h * (a61 * k1.theta + a62 * k2.theta + a63 * k3.theta + a64 * k4.theta + a65 * k5.theta);
+    temp.phi = state.phi + h * (a61 * k1.phi + a62 * k2.phi + a63 * k3.phi + a64 * k4.phi + a65 * k5.phi);
+    temp.ur = state.ur + h * (a61 * k1.ur + a62 * k2.ur + a63 * k3.ur + a64 * k4.ur + a65 * k5.ur);
+    temp.utheta = state.utheta + h * (a61 * k1.utheta + a62 * k2.utheta + a63 * k3.utheta + a64 * k4.utheta + a65 * k5.utheta);
+    temp.uphi = state.uphi + h * (a61 * k1.uphi + a62 * k2.uphi + a63 * k3.uphi + a64 * k4.uphi + a65 * k5.uphi);
+    let k6 = geodesicDerivatives(temp, a, M);
+    
+    var y_next: GeodesicState;
+    y_next.r = state.r + h * (a71 * k1.r + a73 * k3.r + a74 * k4.r + a75 * k5.r + a76 * k6.r);
+    y_next.theta = state.theta + h * (a71 * k1.theta + a73 * k3.theta + a74 * k4.theta + a75 * k5.theta + a76 * k6.theta);
+    y_next.phi = state.phi + h * (a71 * k1.phi + a73 * k3.phi + a74 * k4.phi + a75 * k5.phi + a76 * k6.phi);
+    y_next.ur = state.ur + h * (a71 * k1.ur + a73 * k3.ur + a74 * k4.ur + a75 * k5.ur + a76 * k6.ur);
+    y_next.utheta = state.utheta + h * (a71 * k1.utheta + a73 * k3.utheta + a74 * k4.utheta + a75 * k5.utheta + a76 * k6.utheta);
+    y_next.uphi = state.uphi + h * (a71 * k1.uphi + a73 * k3.uphi + a74 * k4.uphi + a75 * k5.uphi + a76 * k6.uphi);
+    let k7 = geodesicDerivatives(y_next, a, M);
+    
+    // Error estimation
+    let y_err_r = h * (e1 * k1.r + e3 * k3.r + e4 * k4.r + e5 * k5.r + e6 * k6.r + e7 * k7.r);
+    let y_err_theta = h * (e1 * k1.theta + e3 * k3.theta + e4 * k4.theta + e5 * k5.theta + e6 * k6.theta + e7 * k7.theta);
+    let y_err_phi = h * (e1 * k1.phi + e3 * k3.phi + e4 * k4.phi + e5 * k5.phi + e6 * k6.phi + e7 * k7.phi);
+    let y_err_ur = h * (e1 * k1.ur + e3 * k3.ur + e4 * k4.ur + e5 * k5.ur + e6 * k6.ur + e7 * k7.ur);
+    let y_err_utheta = h * (e1 * k1.utheta + e3 * k3.utheta + e4 * k4.utheta + e5 * k5.utheta + e6 * k6.utheta + e7 * k7.utheta);
+    let y_err_uphi = h * (e1 * k1.uphi + e3 * k3.uphi + e4 * k4.uphi + e5 * k5.uphi + e6 * k6.uphi + e7 * k7.uphi);
+    
+    // Compute error norm
+    var err = 0.0;
+    err += square(y_err_r / (atol + max(abs(state.r), abs(y_next.r)) * rtol));
+    err += square(y_err_theta / (atol + max(abs(state.theta), abs(y_next.theta)) * rtol));
+    err += square(y_err_phi / (atol + max(abs(state.phi), abs(y_next.phi)) * rtol));
+    err += square(y_err_ur / (atol + max(abs(state.ur), abs(y_next.ur)) * rtol));
+    err += square(y_err_utheta / (atol + max(abs(state.utheta), abs(y_next.utheta)) * rtol));
+    err += square(y_err_uphi / (atol + max(abs(state.uphi), abs(y_next.uphi)) * rtol));
+    err = sqrt(err / 6.0);
+    err = max(err, 1e-10);
+    
+    // Accept or reject step
+    if (err < 1.0) {
+      // Accept step
+      state = y_next;
+      k1 = k7;
+      err_prev = err;
+      
+      // Early termination conditions
+      if (state.r < rs * 1.01) {
+        break;
+      }
+      if (state.r > maxDistance) {
+        break;
+      }
+    
+      let currentZ = state.r * cos(state.theta);
+      
+      // Check for disk plane crossing
+      if (prevZ * currentZ < 0.0) {
+        // Ray crosses the disk plane - interpolate to find exact crossing point
+        let t = abs(prevZ) / (abs(prevZ) + abs(currentZ));
+        
+        // Interpolate position at crossing
+        let crossingR = mix(state.r - h * k1.r, state.r, t);
+        let crossingTheta = mix(state.theta - h * k1.theta, state.theta, t);
+        let crossingPhi = mix(state.phi - h * k1.phi, state.phi, t);
+        
+        // Convert to cylindrical radius for disk check
+        let cylindricalRadius = crossingR * sin(crossingTheta);
+        
+        if (cylindricalRadius >= innerRadius && cylindricalRadius <= diskRadius) {
+          // Hit the thin disk - render with original noise-based coloring
+          let phiNormalized = (crossingPhi + 3.14159265359) / 6.28318530718;
+          let texCoord = vec2<f32>(cylindricalRadius * 0.2, phiNormalized);
+          
+          let period1 = vec2<f32>(20.0, 1.0);
+          let period2 = vec2<f32>(8.0, 1.0);
+          let period3 = vec2<f32>(3.0, 1.0);
+          
+          let noise1 = fractalPeriodicNoise(texCoord * 2.0, period1, 4);
+          let noise2 = fractalPeriodicNoise(texCoord * 5.0, period2, 3);
+          let noise3 = fractalPeriodicNoise(texCoord * 15.0, period3, 2);
+          let noise4 = periodicNoise2D(texCoord * 40.0, vec2<f32>(1.5, 1.0));
+          
+          let spiralCoord = vec2<f32>(cylindricalRadius * 0.15, phiNormalized * 3.0 + cylindricalRadius * 0.1);
+          let spiralNoise = fractalPeriodicNoise(spiralCoord, vec2<f32>(10.0, 1.0), 3);
+          
+          let radialTurbulence = fractalNoise(vec2<f32>(cylindricalRadius * 0.3, phiNormalized * 10.0), 4);
+          
+          let turbulence = noise1 * 0.3 + noise2 * 0.25 + noise3 * 0.2 + noise4 * 0.15 + spiralNoise * 0.05 + radialTurbulence * 0.05;
+          
+          let heat = 0.7 + turbulence * 0.3;
+          let baseColor = vec3<f32>(heat * 1.2, heat * 0.2, heat * 0.1);
+          
+          let hotSpots1 = max(0.0, noise1 - 0.4) * 1.5;
+          let hotSpots2 = max(0.0, noise2 - 0.5) * 1.0;
+          let hotSpots3 = max(0.0, spiralNoise - 0.3) * 0.8;
+          let totalHotSpots = hotSpots1 + hotSpots2 + hotSpots3;
+          
+          let color = baseColor + vec3<f32>(totalHotSpots, totalHotSpots * 0.7, totalHotSpots * 0.2);
+          
+          let radialFactor = 1.0 - pow((cylindricalRadius - innerRadius) / (diskRadius - innerRadius), 2.0);
+          let finalColor = color * (0.5 + radialFactor * 0.5);
+          
+          return vec4<f32>(finalColor, 1.0);
+        }
+      }
+    }
+    
+    // Adaptive step size control
+    let S = 0.9;
+    if (err_prev < 1.0) {
+      let err_alpha = 0.7 / 5.0;
+      let err_beta = 0.4 / 5.0;
+      h = S * h * pow(err, -err_alpha) * pow(err_prev, err_beta);
+    } else {
+      h = min(h, S * h * pow(1.0 / err, 0.2));
+    }
+    h = max(h, hmin);
+    h = min(h, hmax);
+  }
+  
+  return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+}
+
+fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> vec4<f32> {
   let r0 = length(rayOrigin);
   let theta0 = acos(clamp(rayOrigin.z / r0, -1.0, 1.0));
   let phi0 = atan2(rayOrigin.y, rayOrigin.x);
@@ -546,7 +791,7 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
       let cylindricalRadius = state.r * sin(state.theta);
       
       // Check if we're in the disk region
-      let diskHeightMax = 3.0; // Maximum disk height
+      let diskHeightMax = 2.0; // Maximum disk height
       inDiskRegion = cylindricalRadius >= innerRadius * 0.8 && 
                      cylindricalRadius <= diskRadius * 1.2 && 
                      abs(currentZ) < diskHeightMax;
@@ -632,8 +877,14 @@ fn fs_main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
   let viewMatrixInv = transpose(uniforms.viewMatrix);
   let rayDir = normalize((viewMatrixInv * vec4<f32>(rayDirLocal, 0.0)).xyz);
     
-  // General relativistic ray tracing with volumetric rendering
-  let volumetricResult = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
-  
-  return volumetricResult;
+  // Choose rendering mode based on toggle
+  if (uniforms.volumetricMode > 0.5) {
+    // Volumetric rendering
+    let volumetricResult = traceGeodesicVolumetric(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
+    return volumetricResult;
+  } else {
+    // Thin disk rendering
+    let thinDiskResult = traceGeodesicThinDisk(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
+    return thinDiskResult;
+  }
 }

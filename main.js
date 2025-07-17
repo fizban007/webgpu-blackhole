@@ -17,6 +17,7 @@ class DiskVisualization {
         this.observerDistance = 100.0;
         this.blackHoleMass = 1.0;
         this.blackHoleSpin = 0.0;
+        this.volumetricMode = 1.0; // Start with volumetric mode
         
         this.camera = {
             theta: 0,
@@ -227,7 +228,7 @@ class DiskVisualization {
         uniformData[8] = this.canvas.width;
         uniformData[9] = this.canvas.height;
         uniformData[10] = this.observerDistance;
-        uniformData[11] = 0; // padding
+        uniformData[11] = this.volumetricMode;
         
         // mat4x4 viewMatrix (64 bytes) 
         for (let i = 0; i < 16; i++) {
@@ -395,6 +396,7 @@ class DiskVisualization {
         const spinSlider = document.getElementById('spinSlider');
         const innerRadiusSlider = document.getElementById('innerRadiusSlider');
         const outerRadiusSlider = document.getElementById('outerRadiusSlider');
+        const volumetricToggle = document.getElementById('volumetricToggle');
         
         spinSlider.addEventListener('input', (e) => {
             this.blackHoleSpin = parseFloat(e.target.value);
@@ -409,6 +411,11 @@ class DiskVisualization {
         outerRadiusSlider.addEventListener('input', (e) => {
             this.diskRadius = parseFloat(e.target.value);
             document.getElementById('radius').textContent = this.diskRadius.toFixed(1);
+        });
+        
+        volumetricToggle.addEventListener('change', (e) => {
+            this.volumetricMode = e.target.checked ? 1.0 : 0.0;
+            document.getElementById('volumetricStatus').textContent = e.target.checked ? 'ON' : 'OFF';
         });
 
         window.addEventListener('resize', () => {
