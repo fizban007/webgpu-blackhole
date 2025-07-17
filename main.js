@@ -12,7 +12,7 @@ class DiskVisualization {
         this.lowResTextureView = null;
         this.textureSampler = null;
         this.upscaleUniformBuffer = null;
-        this.resolutionScale = 3; // Render at 1/4 resolution (1/16 pixels)
+        this.resolutionScale = 2; // Render at 1/4 resolution (1/16 pixels)
         
         // Performance monitoring
         this.frameCount = 0;
