@@ -656,7 +656,7 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
   let atol = 1e-4;
   let rtol = 1e-4;
   let hmin = 1e-2;
-  let hmax = 1.0;
+  let hmax = 0.2;
   let maxSteps = 2000;
   
   var rk45_state: RK45State;
@@ -681,7 +681,7 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
       let cylindricalRadius = state.r * sin(state.theta);
       
       // Check if we're in the disk region
-      let diskHeightMax = 2.0;
+      let diskHeightMax = 5.0;
       inDiskRegion = cylindricalRadius >= innerRadius * 0.8 && 
                      cylindricalRadius <= diskRadius * 1.2 && 
                      abs(currentZ) < diskHeightMax;

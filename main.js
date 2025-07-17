@@ -4,8 +4,15 @@ class DiskVisualization {
         this.device = null;
         this.context = null;
         this.renderPipeline = null;
+        this.upscalePipeline = null;
         this.uniformBuffer = null;
         this.bindGroup = null;
+        this.upscaleBindGroup = null;
+        this.lowResTexture = null;
+        this.lowResTextureView = null;
+        this.textureSampler = null;
+        this.upscaleUniformBuffer = null;
+        this.resolutionScale = 3; // Render at 1/4 resolution (1/16 pixels)
         
         // Performance monitoring
         this.frameCount = 0;
@@ -84,7 +91,9 @@ class DiskVisualization {
             await this.initWebGPU();
             this.setupEventListeners();
             await this.createRenderPipeline();
+            await this.createUpscalePipeline();
             this.createUniformBuffer();
+            this.createRenderTargets();
             this.updateUI();
             this.setupPerformanceMonitoring();
             this.render();
@@ -120,6 +129,10 @@ class DiskVisualization {
     resizeCanvas() {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
+        // Recreate render targets when canvas size changes
+        if (this.lowResTexture) {
+            this.createRenderTargets();
+        }
     }
     
     async loadShader(url) {
@@ -177,6 +190,97 @@ class DiskVisualization {
         });
     }
     
+    async createUpscalePipeline() {
+        const vertexShaderCode = await this.loadShader('vertex.wgsl');
+        const upscaleShaderCode = await this.loadShader('upscale.wgsl');
+        
+        const vertexShader = this.device.createShaderModule({
+            code: vertexShaderCode,
+        });
+        
+        const upscaleShader = this.device.createShaderModule({
+            code: upscaleShaderCode,
+        });
+        
+        this.upscalePipeline = this.device.createRenderPipeline({
+            layout: 'auto',
+            vertex: {
+                module: vertexShader,
+                entryPoint: 'vs_main',
+            },
+            fragment: {
+                module: upscaleShader,
+                entryPoint: 'fs_main',
+                targets: [{
+                    format: navigator.gpu.getPreferredCanvasFormat(),
+                }],
+            },
+            primitive: {
+                topology: 'triangle-list',
+            },
+        });
+    }
+    
+    createRenderTargets() {
+        // Calculate low resolution dimensions
+        const lowResWidth = Math.max(1, Math.floor(this.canvas.width / this.resolutionScale));
+        const lowResHeight = Math.max(1, Math.floor(this.canvas.height / this.resolutionScale));
+        
+        // Destroy existing texture if it exists
+        if (this.lowResTexture) {
+            this.lowResTexture.destroy();
+        }
+        
+        // Create low resolution render target
+        this.lowResTexture = this.device.createTexture({
+            size: [lowResWidth, lowResHeight],
+            format: navigator.gpu.getPreferredCanvasFormat(),
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        });
+        
+        this.lowResTextureView = this.lowResTexture.createView();
+        
+        // Create texture sampler
+        this.textureSampler = this.device.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear',
+        });
+        
+        // Create uniform buffer for upscale shader
+        this.upscaleUniformBuffer = this.device.createBuffer({
+            size: 8, // 2 floats (screenWidth, screenHeight)
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        
+        // Update upscale uniform buffer with full screen dimensions
+        const upscaleUniformData = new Float32Array([
+            this.canvas.width,
+            this.canvas.height
+        ]);
+        this.device.queue.writeBuffer(this.upscaleUniformBuffer, 0, upscaleUniformData);
+        
+        // Create bind group for upscaling
+        this.upscaleBindGroup = this.device.createBindGroup({
+            layout: this.upscalePipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: this.lowResTextureView,
+                },
+                {
+                    binding: 1,
+                    resource: this.textureSampler,
+                },
+                {
+                    binding: 2,
+                    resource: {
+                        buffer: this.upscaleUniformBuffer,
+                    },
+                },
+            ],
+        });
+    }
+    
     createUniformBuffer() {
         // Optimized uniform buffer layout with proper 16-byte alignment
         // Layout: vec3 cameraPos (12 bytes + 4 padding), 5 floats (20 bytes + 12 padding), mat4x4 (64 bytes)
@@ -225,8 +329,11 @@ class DiskVisualization {
         uniformData[5] = this.innerRadius;
         uniformData[6] = this.blackHoleMass;
         uniformData[7] = this.blackHoleSpin;
-        uniformData[8] = this.canvas.width;
-        uniformData[9] = this.canvas.height;
+        // Use low resolution dimensions for the fragment shader
+        const lowResWidth = Math.max(1, Math.floor(this.canvas.width / this.resolutionScale));
+        const lowResHeight = Math.max(1, Math.floor(this.canvas.height / this.resolutionScale));
+        uniformData[8] = lowResWidth;
+        uniformData[9] = lowResHeight;
         uniformData[10] = this.observerDistance;
         uniformData[11] = this.volumetricMode;
         
@@ -428,9 +535,26 @@ class DiskVisualization {
         this.updatePerformanceStats();
         
         const commandEncoder = this.device.createCommandEncoder();
-        const textureView = this.context.getCurrentTexture().createView();
         
-        const renderPassDescriptor = {
+        // First pass: Render black hole simulation to low resolution texture
+        const lowResRenderPassDescriptor = {
+            colorAttachments: [{
+                view: this.lowResTextureView,
+                clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+                loadOp: 'clear',
+                storeOp: 'store',
+            }],
+        };
+        
+        const lowResPassEncoder = commandEncoder.beginRenderPass(lowResRenderPassDescriptor);
+        lowResPassEncoder.setPipeline(this.renderPipeline);
+        lowResPassEncoder.setBindGroup(0, this.bindGroup);
+        lowResPassEncoder.draw(3, 1, 0, 0);
+        lowResPassEncoder.end();
+        
+        // Second pass: Upscale low resolution texture to full screen
+        const textureView = this.context.getCurrentTexture().createView();
+        const upscaleRenderPassDescriptor = {
             colorAttachments: [{
                 view: textureView,
                 clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
@@ -439,11 +563,11 @@ class DiskVisualization {
             }],
         };
         
-        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-        passEncoder.setPipeline(this.renderPipeline);
-        passEncoder.setBindGroup(0, this.bindGroup);
-        passEncoder.draw(3, 1, 0, 0);
-        passEncoder.end();
+        const upscalePassEncoder = commandEncoder.beginRenderPass(upscaleRenderPassDescriptor);
+        upscalePassEncoder.setPipeline(this.upscalePipeline);
+        upscalePassEncoder.setBindGroup(0, this.upscaleBindGroup);
+        upscalePassEncoder.draw(3, 1, 0, 0);
+        upscalePassEncoder.end();
         
         this.device.queue.submit([commandEncoder.finish()]);
         
