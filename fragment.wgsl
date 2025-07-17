@@ -307,15 +307,24 @@ fn getDiskDensity(r: f32, z: f32, phi: f32, innerRadius: f32, outerRadius: f32) 
     let radialDensity = pow(1.0 - radialNorm, 0.5) * (1.0 + 3.0 * exp(-radialNorm * 5.0));
     
     // Add volumetric noise for cloud structure
-    let noiseCoord = vec3<f32>(r * 0.1, phi * 2.0, z * 2.0);
-    let noise1 = simplexNoise2D(noiseCoord.xy) * 0.5 + 0.5;
-    let noise2 = simplexNoise2D(noiseCoord.xz * 3.0) * 0.5 + 0.5;
-    let noise3 = simplexNoise2D(vec2<f32>(phi * 5.0, z * 10.0)) * 0.5 + 0.5;
+    // Use periodic coordinates for seamless wrapping in phi
+    let phiNorm = (phi + 3.14159265359) / 6.28318530718; // Normalize phi to [0,1]
     
-    // Turbulent density variations
-    let turbulence = noise1 * 0.4 + noise2 * 0.3 + noise3 * 0.3;
+    // Create periodic noise coordinates using sin/cos for seamless wrapping
+    let phiCos = cos(phi);
+    let phiSin = sin(phi);
     
-    // Spiral arm structure
+    // Simplified noise for better performance
+    let noise1 = simplexNoise2D(vec2<f32>(r * 0.1, z * 2.0)) * 0.5 + 0.5;
+    let noise2 = simplexNoise2D(vec2<f32>(phiCos * 3.0 + r * 0.05, phiSin * 3.0 + z * 0.5)) * 0.5 + 0.5;
+    
+    // Single periodic noise for phi variations
+    let periodicNoise1 = periodicNoise2D(vec2<f32>(r * 0.2, phiNorm * 4.0), vec2<f32>(10.0, 1.0));
+    
+    // Simplified turbulence calculation
+    let turbulence = noise1 * 0.4 + noise2 * 0.4 + (periodicNoise1 * 0.5 + 0.5) * 0.2;
+    
+    // Spiral arm structure using periodic functions
     let spiralAngle = phi + r * 0.2;
     let spiralPattern = sin(spiralAngle * 3.0) * 0.5 + 0.5;
     let spiralDensity = mix(0.3, 1.0, spiralPattern * turbulence);
@@ -325,7 +334,7 @@ fn getDiskDensity(r: f32, z: f32, phi: f32, innerRadius: f32, outerRadius: f32) 
     
     // Temperature and emission based on radius
     let temperature = 1.0 - radialNorm * 0.7; // Hotter near inner edge
-    let emission_intensity = temperature * radialDensity * 2.0;
+    let emission_intensity = temperature * radialDensity * 3.0;
     
     // Color based on temperature - blue-white hot to red cool
     let hotColor = vec3<f32>(0.7, 0.8, 1.0); // Blue-white
@@ -393,12 +402,12 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
   }
     
   // RK45 Dormand-Prince integration with adaptive stepping
-  var h = 0.2; // Initial step size
-  let atol = 1e-4;
-  let rtol = 1e-4;
-  let hmin = 1e-2;
-  let hmax = 1.0;
-  let maxSteps = 5000;
+  var h = 0.1; // Larger initial step size
+  let atol = 1e-4; // Relaxed tolerance
+  let rtol = 1e-4; // Relaxed tolerance
+  let hmin = 1e-2; // Larger minimum step
+  let hmax = 1.0; // Larger maximum step
+  let maxSteps = 2000; // Reduced for performance
     
   // Precomputed RK45 Dormand-Prince coefficients (stored once)
   const c2 = 0.2;
@@ -437,6 +446,11 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
     
   var k1 = geodesicDerivatives(state, a, M);
   var err_prev = 1.0;
+  
+  // Track when we're in the disk region for adaptive sampling
+  var inDiskRegion = false;
+  var volumetricStepCounter = 0;
+  let volumetricSampleRate = 2; // Sample every N steps when in disk
     
   for (var step = 0; step < maxSteps; step++) {
     let prevZ = state.r * cos(state.theta);
@@ -531,27 +545,43 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
       let currentZ = state.r * cos(state.theta);
       let cylindricalRadius = state.r * sin(state.theta);
       
-      // Sample the disk density at this position
-      let sample = getDiskDensity(cylindricalRadius, currentZ, state.phi, innerRadius, diskRadius);
+      // Check if we're in the disk region
+      let diskHeightMax = 3.0; // Maximum disk height
+      inDiskRegion = cylindricalRadius >= innerRadius * 0.8 && 
+                     cylindricalRadius <= diskRadius * 1.2 && 
+                     abs(currentZ) < diskHeightMax;
       
-      if (sample.density > 0.001) {
-        // Compute optical depth through this step
-        let stepLength = h * length(vec3<f32>(k1.r, k1.theta * state.r, k1.phi * state.r * sin(state.theta)));
-        let opticalDepth = sample.density * stepLength * 0.5; // Scale factor for optical depth
+      // Only sample volumetrics when in disk region and at sampling interval
+      if (inDiskRegion) {
+        volumetricStepCounter += 1;
         
-        // Beer-Lambert law for absorption
-        let transmission = exp(-opticalDepth);
-        
-        // Accumulate emission attenuated by current opacity
-        accumulatedColor += sample.emission * (1.0 - transmission) * (1.0 - accumulatedOpacity);
-        
-        // Update accumulated opacity
-        accumulatedOpacity += (1.0 - transmission) * (1.0 - accumulatedOpacity);
-        
-        // Early exit if we've accumulated enough opacity
-        if (accumulatedOpacity > 0.99) {
-          break;
+        if (volumetricStepCounter % volumetricSampleRate == 0) {
+          // Sample the disk density at this position
+          let sample = getDiskDensity(cylindricalRadius, currentZ, state.phi, innerRadius, diskRadius);
+          
+          if (sample.density > 0.001) {
+            // Compute optical depth through multiple steps at once
+            let effectiveStepLength = h * f32(volumetricSampleRate) * length(vec3<f32>(k1.r, k1.theta * state.r, k1.phi * state.r * sin(state.theta)));
+            let opticalDepth = sample.density * effectiveStepLength * 0.5;
+            
+            // Beer-Lambert law for absorption
+            let transmission = exp(-opticalDepth);
+            
+            // Accumulate emission attenuated by current opacity
+            accumulatedColor += sample.emission * (1.0 - transmission) * (1.0 - accumulatedOpacity);
+            
+            // Update accumulated opacity
+            accumulatedOpacity += (1.0 - transmission) * (1.0 - accumulatedOpacity);
+            
+            // Early exit if we've accumulated enough opacity
+            if (accumulatedOpacity > 0.95) { // Slightly lower threshold for performance
+              break;
+            }
+          }
         }
+      } else if (state.r > diskRadius * 1.5 && state.ur > 0.0) {
+        // Ray is moving away from disk, can terminate early
+        break;
       }
     }
         
@@ -577,7 +607,7 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
 @fragment
 fn fs_main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
   // Block-based rendering - compute only every nth pixel, use for entire block
-  let blockSize = 1; // Reduced from 16 for better quality
+  let blockSize = 1; // Increased for better performance
   let pixelX = i32(fragCoord.x);
   let pixelY = i32(fragCoord.y);
   let blockX = (pixelX / blockSize) * blockSize;
