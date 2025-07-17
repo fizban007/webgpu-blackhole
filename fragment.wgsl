@@ -247,6 +247,11 @@ struct DiskHit {
     phi: f32,
 }
 
+struct VolumetricSample {
+    density: f32,
+    emission: vec3<f32>,
+}
+
 fn geodesicDerivatives(state: GeodesicState, a: f32, M: f32) -> GeodesicState {
   let metric = computeMetric(state.r, state.theta, a, M);
   let u_0 = u0(metric, state.ur, state.utheta, state.uphi);
@@ -283,19 +288,68 @@ fn geodesicDerivatives(state: GeodesicState, a: f32, M: f32) -> GeodesicState {
   return derivs;
 }
 
-fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> DiskHit {
+fn getDiskDensity(r: f32, z: f32, phi: f32, innerRadius: f32, outerRadius: f32) -> VolumetricSample {
+    var sample: VolumetricSample;
+    sample.density = 0.0;
+    sample.emission = vec3<f32>(0.0);
+    
+    // Disk height profile - exponential falloff from midplane
+    let diskHeight = 0.5 + (r - innerRadius) / (outerRadius - innerRadius) * 2.0; // Height increases with radius
+    let heightFalloff = exp(-abs(z) / diskHeight);
+    
+    // Radial density profile
+    let radialNorm = (r - innerRadius) / (outerRadius - innerRadius);
+    if (radialNorm < 0.0 || radialNorm > 1.0) {
+        return sample;
+    }
+    
+    // Power law density profile with inner edge enhancement
+    let radialDensity = pow(1.0 - radialNorm, 0.5) * (1.0 + 3.0 * exp(-radialNorm * 5.0));
+    
+    // Add volumetric noise for cloud structure
+    let noiseCoord = vec3<f32>(r * 0.1, phi * 2.0, z * 2.0);
+    let noise1 = simplexNoise2D(noiseCoord.xy) * 0.5 + 0.5;
+    let noise2 = simplexNoise2D(noiseCoord.xz * 3.0) * 0.5 + 0.5;
+    let noise3 = simplexNoise2D(vec2<f32>(phi * 5.0, z * 10.0)) * 0.5 + 0.5;
+    
+    // Turbulent density variations
+    let turbulence = noise1 * 0.4 + noise2 * 0.3 + noise3 * 0.3;
+    
+    // Spiral arm structure
+    let spiralAngle = phi + r * 0.2;
+    let spiralPattern = sin(spiralAngle * 3.0) * 0.5 + 0.5;
+    let spiralDensity = mix(0.3, 1.0, spiralPattern * turbulence);
+    
+    // Final density
+    sample.density = radialDensity * heightFalloff * spiralDensity * 0.8;
+    
+    // Temperature and emission based on radius
+    let temperature = 1.0 - radialNorm * 0.7; // Hotter near inner edge
+    let emission_intensity = temperature * radialDensity * 2.0;
+    
+    // Color based on temperature - blue-white hot to red cool
+    let hotColor = vec3<f32>(0.7, 0.8, 1.0); // Blue-white
+    let warmColor = vec3<f32>(1.0, 0.5, 0.2); // Orange
+    let coolColor = vec3<f32>(0.8, 0.1, 0.05); // Red
+    
+    let color = mix(mix(coolColor, warmColor, temperature), hotColor, pow(temperature, 2.0));
+    sample.emission = color * emission_intensity * (0.5 + turbulence * 0.5);
+    
+    return sample;
+}
+
+fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRadius: f32, innerRadius: f32, maxDistance: f32) -> vec4<f32> {
   let r0 = length(rayOrigin);
   let theta0 = acos(clamp(rayOrigin.z / r0, -1.0, 1.0));
   let phi0 = atan2(rayOrigin.y, rayOrigin.x);
     
-  var result: DiskHit;
-  result.hit = false;
-  result.r = 0.0;
-  result.phi = 0.0;
+  // Initialize volumetric accumulation
+  var accumulatedColor = vec3<f32>(0.0);
+  var accumulatedOpacity = 0.0;
   
   let rs = M + sqrt(M * M - a * a); // Event horizon
   if (r0 < rs * 1.01) {
-    return result;
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
   }
     
   // Calculate impact parameter
@@ -304,8 +358,8 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
   let impactParameter = length(closestPoint);
 
   // Check if the ray is too far from the disk or too close to the black hole
-  if (impactParameter > diskRadius * 1.1) {
-    return result; // Too far from the disk
+  if (impactParameter > diskRadius * 1.5) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0); // Too far from the disk
   }
 
   // Initial conditions for geodesic
@@ -464,40 +518,39 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
       k1 = k7;
       err_prev = err;
             
-      // Early termination conditions for performance
+      // Early termination conditions
       if (state.r < rs * 1.01) {
-        return result; // Hit event horizon
+        break; // Hit event horizon
       }
             
       if (state.r > maxDistance) {
-        return result; // Escaped to infinity
+        break; // Escaped to infinity
       }
-            
-      // Early exit if ray is moving away from disk plane and far from it
+      
+      // Volumetric sampling along the ray
       let currentZ = state.r * cos(state.theta);
-      if (state.ur > 0 && state.r > diskRadius * 1.2) {
-        return result; // Moving away from the black hole, won't hit
-      }
-
-      // Check for disk crossing
-      if (prevZ * currentZ < 0.0) {
-        // Ray crosses the disk plane - interpolate to find exact crossing point
-        let t = abs(prevZ) / (abs(prevZ) + abs(currentZ));
+      let cylindricalRadius = state.r * sin(state.theta);
+      
+      // Sample the disk density at this position
+      let sample = getDiskDensity(cylindricalRadius, currentZ, state.phi, innerRadius, diskRadius);
+      
+      if (sample.density > 0.001) {
+        // Compute optical depth through this step
+        let stepLength = h * length(vec3<f32>(k1.r, k1.theta * state.r, k1.phi * state.r * sin(state.theta)));
+        let opticalDepth = sample.density * stepLength * 0.5; // Scale factor for optical depth
         
-        // Interpolate position at crossing
-        let crossingR = mix(state.r - h * k1.r, state.r, t);
-        let crossingTheta = mix(state.theta - h * k1.theta, state.theta, t);
-        let crossingPhi = mix(state.phi - h * k1.phi, state.phi, t);
+        // Beer-Lambert law for absorption
+        let transmission = exp(-opticalDepth);
         
-        // Convert to cylindrical radius for disk check
-        let cylindricalRadius = crossingR * sin(crossingTheta);
+        // Accumulate emission attenuated by current opacity
+        accumulatedColor += sample.emission * (1.0 - transmission) * (1.0 - accumulatedOpacity);
         
-        // Check if the crossing point is within the disk bounds
-        if (cylindricalRadius >= innerRadius && cylindricalRadius <= diskRadius) {
-          result.hit = true;
-          result.r = cylindricalRadius;
-          result.phi = crossingPhi;
-          return result;
+        // Update accumulated opacity
+        accumulatedOpacity += (1.0 - transmission) * (1.0 - accumulatedOpacity);
+        
+        // Early exit if we've accumulated enough opacity
+        if (accumulatedOpacity > 0.99) {
+          break;
         }
       }
     }
@@ -517,7 +570,7 @@ fn traceGeodesic(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32, diskRa
     h = min(h, hmax);
   }
     
-  return result;
+  return vec4<f32>(accumulatedColor, 1.0);
 }
 
 
@@ -549,54 +602,8 @@ fn fs_main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
   let viewMatrixInv = transpose(uniforms.viewMatrix);
   let rayDir = normalize((viewMatrixInv * vec4<f32>(rayDirLocal, 0.0)).xyz);
     
-  // General relativistic ray tracing for entire screen
-  let diskHit = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
+  // General relativistic ray tracing with volumetric rendering
+  let volumetricResult = traceGeodesic(uniforms.cameraPos, rayDir, uniforms.blackHoleSpin, uniforms.blackHoleMass, uniforms.diskRadius, uniforms.innerRadius, uniforms.observerDistance * 1.3);
   
-  if (diskHit.hit) {
-    // Create texture coordinates from hit position
-    // Scale phi to [0, 1] range for periodic wrapping
-    let phiNormalized = (diskHit.phi + 3.14159265359) / 6.28318530718;
-    let texCoord = vec2<f32>(diskHit.r * 0.2, phiNormalized);
-    
-    // Multiple periods for different frequency components
-    let period1 = vec2<f32>(20.0, 1.0);  // Medium radial period
-    let period2 = vec2<f32>(8.0, 1.0);   // Smaller radial period
-    let period3 = vec2<f32>(3.0, 1.0);   // Fine radial details
-    
-    // Generate multiple octaves of periodic noise with different radial scales
-    let noise1 = fractalPeriodicNoise(texCoord * 2.0, period1, 4);
-    let noise2 = fractalPeriodicNoise(texCoord * 5.0, period2, 3);
-    let noise3 = fractalPeriodicNoise(texCoord * 15.0, period3, 2);
-    let noise4 = periodicNoise2D(texCoord * 40.0, vec2<f32>(1.5, 1.0));
-    
-    // Create spiral patterns by mixing radial and angular components
-    let spiralCoord = vec2<f32>(diskHit.r * 0.15, phiNormalized * 3.0 + diskHit.r * 0.1);
-    let spiralNoise = fractalPeriodicNoise(spiralCoord, vec2<f32>(10.0, 1.0), 3);
-    
-    // Radial turbulence with fractal characteristics
-    let radialTurbulence = fractalNoise(vec2<f32>(diskHit.r * 0.3, phiNormalized * 10.0), 4);
-    
-    // Combine noises for complex, fractal-like texture
-    let turbulence = noise1 * 0.3 + noise2 * 0.25 + noise3 * 0.2 + noise4 * 0.15 + spiralNoise * 0.05 + radialTurbulence * 0.05;
-    
-    // Create color variations - hot accretion disk
-    let heat = 0.7 + turbulence * 0.3;
-    let baseColor = vec3<f32>(heat * 1.2, heat * 0.2, heat * 0.1);
-    
-    // Add bright hot spots with more complex patterns
-    let hotSpots1 = max(0.0, noise1 - 0.4) * 1.5;
-    let hotSpots2 = max(0.0, noise2 - 0.5) * 1.0;
-    let hotSpots3 = max(0.0, spiralNoise - 0.3) * 0.8;
-    let totalHotSpots = hotSpots1 + hotSpots2 + hotSpots3;
-    
-    let color = baseColor + vec3<f32>(totalHotSpots, totalHotSpots * 0.7, totalHotSpots * 0.2);
-    
-    // Radial falloff for more realistic appearance
-    let radialFactor = 1.0 - pow((diskHit.r - uniforms.innerRadius) / (uniforms.diskRadius - uniforms.innerRadius), 2.0);
-    let finalColor = color * (0.5 + radialFactor * 0.5);
-    
-    return vec4<f32>(finalColor, 1.0);
-  } else {
-    return vec4<f32>(0.0, 0.0, 0.0, 1.0); // Black background
-  }
+  return volumetricResult;
 }
