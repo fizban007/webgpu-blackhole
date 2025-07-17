@@ -26,7 +26,7 @@ class DiskVisualization {
         this.innerRadius = 5.0;
         this.observerDistance = 100.0;
         this.blackHoleMass = 1.0;
-        this.blackHoleSpin = 0.0;
+        this.blackHoleSpin = 0.5;
         this.volumetricMode = 1.0; // Start with volumetric mode
         this.time = 0.0;
         

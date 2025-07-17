@@ -295,7 +295,8 @@ fn getDiskDensity(r: f32, z: f32, phi: f32, innerRadius: f32, outerRadius: f32) 
     
     // Disk height profile - exponential falloff from midplane
     let diskHeight = 0.5 + (r - innerRadius) / (outerRadius - innerRadius) * 2.0; // Height increases with radius
-    let heightFalloff = exp(-abs(z) / diskHeight);
+    // let heightFalloff = exp(-abs(z) / diskHeight);
+    let heightFalloff = 1.0 / (square(abs(z) / diskHeight) + 1.0);
     
     // Radial density profile
     let radialNorm = (r - innerRadius) / (outerRadius - innerRadius);
@@ -700,7 +701,7 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
       let cylindricalRadius = state.r * sin(state.theta);
       
       // Check if we're in the disk region
-      let diskHeightMax = 5.0;
+      let diskHeightMax = 1.0;
       inDiskRegion = cylindricalRadius >= innerRadius * 0.8 && 
                      cylindricalRadius <= diskRadius * 1.2 && 
                      abs(currentZ) < diskHeightMax;
@@ -714,12 +715,13 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
           
           if (sample.density > 0.001) {
             let effectiveStepLength = rk45_state.h * f32(volumetricSampleRate) * length(vec3<f32>(rk45_state.k1.r, rk45_state.k1.theta * state.r, rk45_state.k1.phi * state.r * sin(state.theta)));
+            // let effectiveStepLength = rk45_state.h * f32(volumetricSampleRate);
             let opticalDepth = sample.density * effectiveStepLength * 0.5;
             let transmission = exp(-opticalDepth);
-            
-            accumulatedColor += sample.emission * (1.0 - transmission) * (1.0 - accumulatedOpacity);
+
             accumulatedOpacity += (1.0 - transmission) * (1.0 - accumulatedOpacity);
-            
+            accumulatedColor += sample.emission * (1.0 - transmission) * (1.0 - accumulatedOpacity);
+
             if (accumulatedOpacity > 0.95) {
               break;
             }
