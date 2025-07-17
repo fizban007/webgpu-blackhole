@@ -1,6 +1,6 @@
 struct Uniforms {
     cameraPos: vec3<f32>,
-    padding1: f32,
+    time: f32,
     diskRadius: f32,
     innerRadius: f32,
     blackHoleMass: f32,
@@ -306,26 +306,33 @@ fn getDiskDensity(r: f32, z: f32, phi: f32, innerRadius: f32, outerRadius: f32) 
     // Power law density profile with inner edge enhancement
     let radialDensity = pow(1.0 - radialNorm, 0.5) * (1.0 + 3.0 * exp(-radialNorm * 5.0));
     
-    // Add volumetric noise for cloud structure
+    // Add time-varying rotation and fluctuation
+    let timeOffset = uniforms.time * 0.1; // Slow rotation
+    // let fluctuation = sin(-uniforms.time * 0.3) * 0.5 + cos(uniforms.time * 0.8) * 0.4 + 0.5; // Temporal fluctuation
+    let fluctuation = sin(-uniforms.time * 0.3) * 0.5 + 0.5; // Temporal fluctuation
+    
+    // Add volumetric noise for cloud structure with time animation
     // Use periodic coordinates for seamless wrapping in phi
     let phiNorm = (phi + 3.14159265359) / 6.28318530718; // Normalize phi to [0,1]
+    let animatedPhi = phi - timeOffset * 2.0; // Rotate over time
     
     // Create periodic noise coordinates using sin/cos for seamless wrapping
-    let phiCos = cos(phi);
-    let phiSin = sin(phi);
+    let phiCos = cos(animatedPhi);
+    let phiSin = sin(animatedPhi);
     
-    // Simplified noise for better performance
-    let noise1 = simplexNoise2D(vec2<f32>(r * 0.1, z * 2.0)) * 0.5 + 0.5;
-    let noise2 = simplexNoise2D(vec2<f32>(phiCos * 3.0 + r * 0.05, phiSin * 3.0 + z * 0.5)) * 0.5 + 0.5;
+    // Time-varying noise with fluctuation
+    let noise1 = simplexNoise2D(vec2<f32>(r * 0.1, z * 2.0 + uniforms.time * 0.05)) * 0.5 + 0.5;
+    let noise2 = simplexNoise2D(vec2<f32>(phiCos * 3.0 + r * 0.05, phiSin * 3.0 + z * 0.5 + uniforms.time * 0.02)) * 0.5 + 0.5;
     
-    // Single periodic noise for phi variations
-    let periodicNoise1 = periodicNoise2D(vec2<f32>(r * 0.2, phiNorm * 4.0), vec2<f32>(10.0, 1.0));
+    // Animated periodic noise for phi variations
+    let animatedPhiNorm = fract(phiNorm + timeOffset * 0.5);
+    let periodicNoise1 = periodicNoise2D(vec2<f32>(r * 0.2, animatedPhiNorm * 4.0 + uniforms.time * 0.1), vec2<f32>(10.0, 1.0));
     
-    // Simplified turbulence calculation
-    let turbulence = noise1 * 0.4 + noise2 * 0.4 + (periodicNoise1 * 0.5 + 0.5) * 0.2;
+    // Simplified turbulence calculation with time variation
+    let turbulence = (noise1 * 0.4 + noise2 * 0.4 + (periodicNoise1 * 0.5 + 0.5) * 0.2) * (0.8 + fluctuation * 0.4);
     
-    // Spiral arm structure using periodic functions
-    let spiralAngle = phi + r * 0.2;
+    // Spiral arm structure with rotation
+    let spiralAngle = animatedPhi + r * 0.2;
     let spiralPattern = sin(spiralAngle * 3.0) * 0.5 + 0.5;
     let spiralDensity = mix(0.3, 1.0, spiralPattern * turbulence);
     
@@ -487,24 +494,36 @@ fn performRK45Step(state: ptr<function, GeodesicState>, rk45_state: ptr<function
 }
 
 fn renderThinDisk(cylindricalRadius: f32, phi: f32, innerRadius: f32, diskRadius: f32) -> vec4<f32> {
-  let phiNormalized = (phi + 3.14159265359) / 6.28318530718;
+  // Add time-varying rotation and fluctuation
+  let timeOffset = uniforms.time * 0.08; // Disk rotation speed
+  let fluctuation = sin(uniforms.time * 0.25) * 0.5 + 0.5; // Temporal fluctuation
+  
+  let animatedPhi = phi - timeOffset * 2.0;
+  let phiNormalized = (animatedPhi + 3.14159265359) / 6.28318530718;
   let texCoord = vec2<f32>(cylindricalRadius * 0.2, phiNormalized);
   
   let period1 = vec2<f32>(20.0, 1.0);
   let period2 = vec2<f32>(8.0, 1.0);
   let period3 = vec2<f32>(3.0, 1.0);
   
-  let noise1 = fractalPeriodicNoise(texCoord * 2.0, period1, 4);
-  let noise2 = fractalPeriodicNoise(texCoord * 5.0, period2, 3);
-  let noise3 = fractalPeriodicNoise(texCoord * 15.0, period3, 2);
-  let noise4 = periodicNoise2D(texCoord * 40.0, vec2<f32>(1.5, 1.0));
+  // Add time animation to noise coordinates
+  let timeCoord1 = texCoord * 2.0 + vec2<f32>(uniforms.time * 0.03, 0.0);
+  let timeCoord2 = texCoord * 5.0 + vec2<f32>(uniforms.time * 0.05, 0.0);
+  let timeCoord3 = texCoord * 15.0 + vec2<f32>(uniforms.time * 0.02, 0.0);
+  let timeCoord4 = texCoord * 40.0 + vec2<f32>(uniforms.time * 0.08, 0.0);
   
-  let spiralCoord = vec2<f32>(cylindricalRadius * 0.15, phiNormalized * 3.0 + cylindricalRadius * 0.1);
+  let noise1 = fractalPeriodicNoise(timeCoord1, period1, 4);
+  let noise2 = fractalPeriodicNoise(timeCoord2, period2, 3);
+  let noise3 = fractalPeriodicNoise(timeCoord3, period3, 2);
+  let noise4 = periodicNoise2D(timeCoord4, vec2<f32>(1.5, 1.0));
+  
+  let spiralCoord = vec2<f32>(cylindricalRadius * 0.15, phiNormalized * 3.0 + cylindricalRadius * 0.1 + uniforms.time * 0.04);
   let spiralNoise = fractalPeriodicNoise(spiralCoord, vec2<f32>(10.0, 1.0), 3);
   
-  let radialTurbulence = fractalNoise(vec2<f32>(cylindricalRadius * 0.3, phiNormalized * 10.0), 4);
+  let radialTurbulence = fractalNoise(vec2<f32>(cylindricalRadius * 0.3, phiNormalized * 10.0 + uniforms.time * 0.06), 4);
   
-  let turbulence = noise1 * 0.3 + noise2 * 0.25 + noise3 * 0.2 + noise4 * 0.15 + spiralNoise * 0.05 + radialTurbulence * 0.05;
+  // Apply fluctuation to turbulence
+  let turbulence = (noise1 * 0.3 + noise2 * 0.25 + noise3 * 0.2 + noise4 * 0.15 + spiralNoise * 0.05 + radialTurbulence * 0.05) * (0.7 + fluctuation * 0.6);
   
   let heat = 0.7 + turbulence * 0.3;
   let baseColor = vec3<f32>(heat * 1.2, heat * 0.2, heat * 0.1);

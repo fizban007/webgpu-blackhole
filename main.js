@@ -19,12 +19,16 @@ class DiskVisualization {
         this.lastFrameTime = performance.now();
         this.fpsDisplay = null;
         
+        // Time tracking for animations
+        this.startTime = performance.now();
+        
         this.diskRadius = 20.0;
         this.innerRadius = 5.0;
         this.observerDistance = 100.0;
         this.blackHoleMass = 1.0;
         this.blackHoleSpin = 0.0;
         this.volumetricMode = 1.0; // Start with volumetric mode
+        this.time = 0.0;
         
         this.camera = {
             theta: 0,
@@ -324,7 +328,7 @@ class DiskVisualization {
         uniformData[0] = x;
         uniformData[1] = y;
         uniformData[2] = z;
-        uniformData[3] = 0; // padding
+        uniformData[3] = this.time;
         
         // 8 floats with padding to align to 16-byte boundary (32 bytes)
         uniformData[4] = this.diskRadius;
@@ -541,6 +545,10 @@ class DiskVisualization {
     }
     
     render() {
+        // Update time based on elapsed physical time
+        const currentTime = performance.now();
+        this.time = (currentTime - this.startTime) * 0.001; // Convert to seconds
+        
         this.updateCamera();
         this.updatePerformanceStats();
         
