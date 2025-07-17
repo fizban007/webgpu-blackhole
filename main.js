@@ -284,6 +284,7 @@ class DiskVisualization {
     }
     
     setupEventListeners() {
+        // Mouse events
         this.canvas.addEventListener('mousedown', (e) => {
             this.mouseState.isDown = true;
             this.mouseState.lastX = e.clientX;
@@ -307,6 +308,59 @@ class DiskVisualization {
             this.mouseState.lastY = e.clientY;
             
             console.log(`Camera: theta=${this.camera.theta.toFixed(2)}, phi=${this.camera.phi.toFixed(2)}`);
+        });
+        
+        // Touch events for mobile
+        this.canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                this.mouseState.isDown = true;
+                this.mouseState.lastX = e.touches[0].clientX;
+                this.mouseState.lastY = e.touches[0].clientY;
+            } else if (e.touches.length === 2) {
+                // Store initial pinch distance for zoom
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                this.mouseState.pinchDistance = Math.sqrt(dx * dx + dy * dy);
+            }
+        });
+        
+        this.canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            this.mouseState.isDown = false;
+            this.mouseState.pinchDistance = null;
+        });
+        
+        this.canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            
+            if (e.touches.length === 1 && this.mouseState.isDown) {
+                // Single touch - rotate camera
+                const deltaX = e.touches[0].clientX - this.mouseState.lastX;
+                const deltaY = e.touches[0].clientY - this.mouseState.lastY;
+                
+                this.camera.theta -= deltaX * 0.01;
+                this.camera.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.camera.phi - deltaY * 0.004));
+                
+                this.mouseState.lastX = e.touches[0].clientX;
+                this.mouseState.lastY = e.touches[0].clientY;
+                
+                console.log(`Camera: theta=${this.camera.theta.toFixed(2)}, phi=${this.camera.phi.toFixed(2)}`);
+            } else if (e.touches.length === 2 && this.mouseState.pinchDistance) {
+                // Two finger pinch - zoom
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const currentDistance = Math.sqrt(dx * dx + dy * dy);
+                
+                const scale = currentDistance / this.mouseState.pinchDistance;
+                const deltaDistance = (1 - scale) * this.camera.radius * 0.1;
+                
+                this.camera.radius = Math.max(10.0, Math.min(400.0, this.camera.radius + deltaDistance));
+                this.observerDistance = this.camera.radius;
+                this.updateUI();
+                
+                this.mouseState.pinchDistance = currentDistance;
+            }
         });
         
         this.canvas.addEventListener('wheel', (e) => {
