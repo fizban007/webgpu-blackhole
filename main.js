@@ -47,11 +47,13 @@ class DiskVisualization {
         document.getElementById('distance').textContent = this.observerDistance.toFixed(1);
         document.getElementById('mass').textContent = this.blackHoleMass.toFixed(1);
         document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(3);
+        document.getElementById('resolutionScale').textContent = this.resolutionScale.toFixed(1);
         
         // Update slider values to match
         document.getElementById('spinSlider').value = this.blackHoleSpin;
         document.getElementById('innerRadiusSlider').value = this.innerRadius;
         document.getElementById('outerRadiusSlider').value = this.diskRadius;
+        document.getElementById('resolutionScaleSlider').value = this.resolutionScale;
     }
     
     setupPerformanceMonitoring() {
@@ -504,6 +506,7 @@ class DiskVisualization {
         const innerRadiusSlider = document.getElementById('innerRadiusSlider');
         const outerRadiusSlider = document.getElementById('outerRadiusSlider');
         const volumetricToggle = document.getElementById('volumetricToggle');
+        const resolutionScaleSlider = document.getElementById('resolutionScaleSlider');
         
         spinSlider.addEventListener('input', (e) => {
             this.blackHoleSpin = parseFloat(e.target.value);
@@ -523,6 +526,13 @@ class DiskVisualization {
         volumetricToggle.addEventListener('change', (e) => {
             this.volumetricMode = e.target.checked ? 1.0 : 0.0;
             document.getElementById('volumetricStatus').textContent = e.target.checked ? 'ON' : 'OFF';
+        });
+        
+        resolutionScaleSlider.addEventListener('input', (e) => {
+            this.resolutionScale = parseFloat(e.target.value);
+            document.getElementById('resolutionScale').textContent = this.resolutionScale.toFixed(1);
+            // Recreate render targets with new resolution
+            this.createRenderTargets();
         });
 
         window.addEventListener('resize', () => {
