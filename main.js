@@ -55,6 +55,7 @@ class DiskVisualization {
         
         // Update slider values to match
         document.getElementById('spinSlider').value = this.blackHoleSpin;
+        document.getElementById('massSlider').value = this.blackHoleMass;
         document.getElementById('innerRadiusSlider').value = this.innerRadius;
         document.getElementById('outerRadiusSlider').value = this.diskRadius;
         document.getElementById('resolutionScaleSlider').value = this.resolutionScale;
@@ -507,6 +508,7 @@ class DiskVisualization {
         
         // Slider controls
         const spinSlider = document.getElementById('spinSlider');
+        const massSlider = document.getElementById('massSlider');
         const innerRadiusSlider = document.getElementById('innerRadiusSlider');
         const outerRadiusSlider = document.getElementById('outerRadiusSlider');
         const volumetricToggle = document.getElementById('volumetricToggle');
@@ -515,6 +517,11 @@ class DiskVisualization {
         spinSlider.addEventListener('input', (e) => {
             this.blackHoleSpin = parseFloat(e.target.value);
             document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(3);
+        });
+        
+        massSlider.addEventListener('input', (e) => {
+            this.blackHoleMass = parseFloat(e.target.value);
+            document.getElementById('mass').textContent = this.blackHoleMass.toFixed(4);
         });
         
         innerRadiusSlider.addEventListener('input', (e) => {

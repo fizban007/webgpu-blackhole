@@ -95,6 +95,11 @@
             <span id="spin">0.000</span>
         </div>
         <div class="control-group">
+            <label for="massSlider">Black hole mass:</label>
+            <input type="range" id="massSlider" min="0.0001" max="1" step="0.0001" value="1">
+            <span id="mass">1.0</span>
+        </div>
+        <div class="control-group">
             <label for="innerRadiusSlider">Inner radius:</label>
             <input type="range" id="innerRadiusSlider" min="1.5" max="10" step="0.1" value="2">
             <span id="innerRadius">5.0</span>
@@ -110,17 +115,13 @@
             <span id="volumetricStatus">ON</span>
         </div>
         <div class="control-group">
-            <label for="resolutionScaleSlider">Resolution scale:</label>
+            <label for="resolutionScaleSlider">Resolution Downsample:</label>
             <input type="range" id="resolutionScaleSlider" min="1" max="4" step="0.5" value="3">
-            <span id="resolutionScale">3.0</span>
+            <span id="resolutionScale">2.0</span>
         </div>
         <div class="control-group">
             <label>Observer distance:</label>
             <span id="distance">100.0</span>
-        </div>
-        <div class="control-group">
-            <label>Black hole mass:</label>
-            <span id="mass">1.0</span>
         </div>
         <div class="info-text">
             Mouse: orbit camera | Scroll: zoom | S/X: adjust spin
