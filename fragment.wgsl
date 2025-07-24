@@ -151,8 +151,9 @@ fn fractalPeriodicNoise(p: vec2<f32>, period: vec2<f32>, octaves: i32) -> f32 {
     return value / maxValue;
 }
 
-fn computeMetric(r: f32, th: f32, a: f32, M: f32) -> BoyerLindquistMetric {
+fn computeMetric(r: f32, th: f32, a1: f32, M: f32) -> BoyerLindquistMetric {
   var metric: BoyerLindquistMetric;
+  let a = a1 * M;
   metric.a = a;
   metric.M = M;
     
