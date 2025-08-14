@@ -10,6 +10,10 @@ struct Uniforms {
     observerDistance: f32,
     volumetricMode: f32, // 0.0 = thin disk, 1.0 = volumetric
     viewMatrix: mat4x4<f32>,
+    starPosition: vec3<f32>,
+    starRadius: f32,
+    starColor: vec3<f32>,
+    starPadding: f32, // Padding for alignment
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -149,6 +153,19 @@ fn fractalPeriodicNoise(p: vec2<f32>, period: vec2<f32>, octaves: i32) -> f32 {
     }
     
     return value / maxValue;
+}
+
+fn boyerLindquistToCartesian(r: f32, theta: f32, phi: f32) -> vec3<f32> {
+    let x = r * sin(theta) * cos(phi);
+    let y = r * sin(theta) * sin(phi);
+    let z = r * cos(theta);
+    return vec3<f32>(x, y, z);
+}
+
+fn checkStarIntersection(r: f32, theta: f32, phi: f32) -> bool {
+    let rayPos = boyerLindquistToCartesian(r, theta, phi);
+    let distance = length(rayPos - uniforms.starPosition);
+    return distance <= uniforms.starRadius;
 }
 
 fn computeMetric(r: f32, th: f32, a1: f32, M: f32) -> BoyerLindquistMetric {
@@ -607,6 +624,11 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
         break;
       }
       
+      // Check for star intersection
+      if (checkStarIntersection(state.r, state.theta, state.phi)) {
+        return vec4<f32>(uniforms.starColor, 1.0);
+      }
+      
       let currentZ = state.r * cos(state.theta);
       
       // Check for disk plane crossing
@@ -695,6 +717,11 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
       // Step accepted - check termination conditions
       if (state.r < rs * 1.01 || state.r > maxDistance) {
         break;
+      }
+      
+      // Check for star intersection
+      if (checkStarIntersection(state.r, state.theta, state.phi)) {
+        return vec4<f32>(uniforms.starColor, 1.0);
       }
       
       // Volumetric sampling along the ray

@@ -30,6 +30,11 @@ class DiskVisualization {
         this.volumetricMode = 1.0; // Start with volumetric mode
         this.time = 0.0;
         
+        // Star parameters
+        this.starOrbitalRadius = 20.0; // 20 gravitational radii
+        this.starRadius = 5.0; // Star radius
+        this.starOrbitalSpeed = 0.5; // Orbital angular velocity
+        
         this.camera = {
             theta: 0,
             phi: 0.95 * Math.PI / 2,
@@ -52,6 +57,8 @@ class DiskVisualization {
         document.getElementById('mass').textContent = this.blackHoleMass.toFixed(1);
         document.getElementById('spin').textContent = this.blackHoleSpin.toFixed(3);
         document.getElementById('resolutionScale').textContent = this.resolutionScale.toFixed(1);
+        document.getElementById('starRadius').textContent = this.starRadius.toFixed(1);
+        document.getElementById('starDistance').textContent = this.starOrbitalRadius.toFixed(1);
         
         // Update slider values to match
         document.getElementById('spinSlider').value = this.blackHoleSpin;
@@ -59,6 +66,8 @@ class DiskVisualization {
         document.getElementById('innerRadiusSlider').value = this.innerRadius;
         document.getElementById('outerRadiusSlider').value = this.diskRadius;
         document.getElementById('resolutionScaleSlider').value = this.resolutionScale;
+        document.getElementById('starRadiusSlider').value = this.starRadius;
+        document.getElementById('starDistanceSlider').value = this.starOrbitalRadius;
     }
     
     setupPerformanceMonitoring() {
@@ -290,8 +299,8 @@ class DiskVisualization {
     
     createUniformBuffer() {
         // Optimized uniform buffer layout with proper 16-byte alignment
-        // Layout: vec3 cameraPos (12 bytes + 4 padding), 5 floats (20 bytes + 12 padding), mat4x4 (64 bytes)
-        const uniformBufferSize = 16 + 32 + 64; // 112 bytes total, properly aligned
+        // Layout: vec3 cameraPos (12 bytes + 4 padding), 8 floats (32 bytes), mat4x4 (64 bytes), star params (32 bytes)
+        const uniformBufferSize = 16 + 32 + 64 + 32; // 144 bytes total, properly aligned
         this.uniformBuffer = this.device.createBuffer({
             size: uniformBufferSize,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -323,7 +332,7 @@ class DiskVisualization {
         const viewMatrix = this.lookAt(eye, center, up);
         
         // Optimized uniform buffer layout with proper alignment
-        const uniformData = new Float32Array(28); // 112 bytes / 4 = 28 floats
+        const uniformData = new Float32Array(36); // 144 bytes / 4 = 36 floats
         
         // vec3 cameraPos + padding (16 bytes)
         uniformData[0] = x;
@@ -348,6 +357,17 @@ class DiskVisualization {
         for (let i = 0; i < 16; i++) {
             uniformData[12 + i] = viewMatrix[i];
         }
+        
+        // Star parameters (32 bytes)
+        // Position the star at 10 gravitational radii (static for now)
+        uniformData[28] = this.starOrbitalRadius; // starPosition.x
+        uniformData[29] = 0.0; // starPosition.y
+        uniformData[30] = 0.0; // starPosition.z
+        uniformData[31] = this.starRadius; // starRadius
+        uniformData[32] = 1.0; // starColor.r (reddish)
+        uniformData[33] = 0.3; // starColor.g
+        uniformData[34] = 0.2; // starColor.b
+        uniformData[35] = 0.0; // starPadding
         
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
     }
@@ -513,6 +533,8 @@ class DiskVisualization {
         const outerRadiusSlider = document.getElementById('outerRadiusSlider');
         const volumetricToggle = document.getElementById('volumetricToggle');
         const resolutionScaleSlider = document.getElementById('resolutionScaleSlider');
+        const starRadiusSlider = document.getElementById('starRadiusSlider');
+        const starDistanceSlider = document.getElementById('starDistanceSlider');
         
         spinSlider.addEventListener('input', (e) => {
             this.blackHoleSpin = parseFloat(e.target.value);
@@ -544,6 +566,16 @@ class DiskVisualization {
             document.getElementById('resolutionScale').textContent = this.resolutionScale.toFixed(1);
             // Recreate render targets with new resolution
             this.createRenderTargets();
+        });
+        
+        starRadiusSlider.addEventListener('input', (e) => {
+            this.starRadius = parseFloat(e.target.value);
+            document.getElementById('starRadius').textContent = this.starRadius.toFixed(1);
+        });
+        
+        starDistanceSlider.addEventListener('input', (e) => {
+            this.starOrbitalRadius = parseFloat(e.target.value);
+            document.getElementById('starDistance').textContent = this.starOrbitalRadius.toFixed(1);
         });
 
         window.addEventListener('resize', () => {
