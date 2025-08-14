@@ -162,10 +162,46 @@ fn boyerLindquistToCartesian(r: f32, theta: f32, phi: f32) -> vec3<f32> {
     return vec3<f32>(x, y, z);
 }
 
-fn checkStarIntersection(r: f32, theta: f32, phi: f32) -> bool {
+struct StarSample {
+    density: f32,
+    emission: vec3<f32>,
+}
+
+fn getStarDensity(r: f32, theta: f32, phi: f32) -> StarSample {
+    var sample: StarSample;
+    sample.density = 0.0;
+    sample.emission = vec3<f32>(0.0);
+    
     let rayPos = boyerLindquistToCartesian(r, theta, phi);
     let distance = length(rayPos - uniforms.starPosition);
-    return distance <= uniforms.starRadius;
+    
+    if (distance > uniforms.starRadius) {
+        return sample;
+    }
+    
+    // Normalized distance from star center (0 at center, 1 at surface)
+    let normalizedDist = distance / uniforms.starRadius;
+    
+    // Quick falloff density profile - high density at center, drops off quickly
+    // Using exponential falloff for fast opacity buildup
+    let densityFalloff = exp(-normalizedDist / 3.0); // Steep falloff
+    sample.density = densityFalloff * 1.0; // High density multiplier for quick opacity
+    
+    // Star emission with temperature-based color variation
+    let temperature = 1.0 - normalizedDist * 0.1; // Hotter at center
+    let baseIntensity = densityFalloff * temperature * 2.0;
+    
+    // Color varies from reddish at edges to white-hot at center
+    let hotColor = vec3<f32>(1.0, 1.0, 1.0); // White hot
+    let coolColor = uniforms.starColor; // Reddish base color
+    
+    // Blend between cool and hot based on density (higher density = hotter = whiter)
+    let colorTemperature = densityFalloff; // Use density as temperature indicator
+    let finalColor = mix(coolColor, hotColor, colorTemperature * temperature);
+    
+    sample.emission = finalColor * baseIntensity;
+    
+    return sample;
 }
 
 fn computeMetric(r: f32, th: f32, a1: f32, M: f32) -> BoyerLindquistMetric {
@@ -566,6 +602,10 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
   let theta0 = acos(clamp(rayOrigin.z / r0, -1.0, 1.0));
   let phi0 = atan2(rayOrigin.y, rayOrigin.x);
   
+  // Star volumetric accumulation
+  var accumulatedStarColor = vec3<f32>(0.0);
+  var accumulatedStarOpacity = 0.0;
+  
   let rs = M + sqrt(M * M - a * a);
   if (r0 < rs * 1.01) {
     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
@@ -624,9 +664,20 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
         break;
       }
       
-      // Check for star intersection
-      if (checkStarIntersection(state.r, state.theta, state.phi)) {
-        return vec4<f32>(uniforms.starColor, 1.0);
+      // Sample star density
+      let starSample = getStarDensity(state.r, state.theta, state.phi);
+      if (starSample.density > 0.001) {
+        let effectiveStepLength = rk45_state.h * length(vec3<f32>(rk45_state.k1.r, rk45_state.k1.theta * state.r, rk45_state.k1.phi * state.r * sin(state.theta)));
+        let opticalDepth = starSample.density * effectiveStepLength * 0.5; // Use same multiplier as disk
+        let transmission = exp(-opticalDepth);
+        
+        accumulatedStarOpacity += (1.0 - transmission) * (1.0 - accumulatedStarOpacity);
+        accumulatedStarColor += starSample.emission * (1.0 - transmission) * (1.0 - accumulatedStarOpacity);
+        
+        // Early exit if star is opaque enough
+        if (accumulatedStarOpacity > 0.95) {
+          return vec4<f32>(accumulatedStarColor, 1.0);
+        }
       }
       
       let currentZ = state.r * cos(state.theta);
@@ -640,12 +691,22 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
         let cylindricalRadius = crossingR * sin(crossingTheta);
         
         if (cylindricalRadius >= innerRadius && cylindricalRadius <= diskRadius) {
-          return renderThinDisk(cylindricalRadius, crossingPhi, innerRadius, diskRadius);
+          let diskColor = renderThinDisk(cylindricalRadius, crossingPhi, innerRadius, diskRadius);
+          // Composite star over disk if we have accumulated star color
+          if (accumulatedStarOpacity > 0.01) {
+            let finalColor = mix(diskColor.rgb, accumulatedStarColor, accumulatedStarOpacity);
+            return vec4<f32>(finalColor, 1.0);
+          }
+          return diskColor;
         }
       }
     }
   }
   
+  // Return accumulated star color if any, otherwise black
+  if (accumulatedStarOpacity > 0.01) {
+    return vec4<f32>(accumulatedStarColor, 1.0);
+  }
   return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 
@@ -719,9 +780,20 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
         break;
       }
       
-      // Check for star intersection
-      if (checkStarIntersection(state.r, state.theta, state.phi)) {
-        return vec4<f32>(uniforms.starColor, 1.0);
+      // Sample star density
+      let starSample = getStarDensity(state.r, state.theta, state.phi);
+      if (starSample.density > 0.001) {
+        let effectiveStepLength = rk45_state.h * length(vec3<f32>(rk45_state.k1.r, rk45_state.k1.theta * state.r, rk45_state.k1.phi * state.r * sin(state.theta)));
+        let opticalDepth = starSample.density * effectiveStepLength * 0.5; // Use same multiplier as disk
+        let transmission = exp(-opticalDepth);
+        
+        accumulatedOpacity += (1.0 - transmission) * (1.0 - accumulatedOpacity);
+        accumulatedColor += starSample.emission * (1.0 - transmission) * (1.0 - accumulatedOpacity);
+        
+        // Early exit if opaque enough
+        if (accumulatedOpacity > 0.95) {
+          return vec4<f32>(accumulatedColor, 1.0);
+        }
       }
       
       // Volumetric sampling along the ray
