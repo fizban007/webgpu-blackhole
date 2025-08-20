@@ -415,6 +415,44 @@ struct RK45State {
   k1: GeodesicState,
 }
 
+fn performRK4Step(state: ptr<function, GeodesicState>, h: f32, a: f32, M: f32) {
+  // Simple RK4 step with fixed step size for use near poles
+  let k1 = geodesicDerivatives(*state, a, M);
+  
+  var temp: GeodesicState;
+  temp.r = (*state).r + h * 0.5 * k1.r;
+  temp.theta = (*state).theta + h * 0.5 * k1.theta;
+  temp.phi = (*state).phi + h * 0.5 * k1.phi;
+  temp.ur = (*state).ur + h * 0.5 * k1.ur;
+  temp.utheta = (*state).utheta + h * 0.5 * k1.utheta;
+  temp.uphi = (*state).uphi + h * 0.5 * k1.uphi;
+  let k2 = geodesicDerivatives(temp, a, M);
+  
+  temp.r = (*state).r + h * 0.5 * k2.r;
+  temp.theta = (*state).theta + h * 0.5 * k2.theta;
+  temp.phi = (*state).phi + h * 0.5 * k2.phi;
+  temp.ur = (*state).ur + h * 0.5 * k2.ur;
+  temp.utheta = (*state).utheta + h * 0.5 * k2.utheta;
+  temp.uphi = (*state).uphi + h * 0.5 * k2.uphi;
+  let k3 = geodesicDerivatives(temp, a, M);
+  
+  temp.r = (*state).r + h * k3.r;
+  temp.theta = (*state).theta + h * k3.theta;
+  temp.phi = (*state).phi + h * k3.phi;
+  temp.ur = (*state).ur + h * k3.ur;
+  temp.utheta = (*state).utheta + h * k3.utheta;
+  temp.uphi = (*state).uphi + h * k3.uphi;
+  let k4 = geodesicDerivatives(temp, a, M);
+  
+  // Update state with RK4 formula
+  (*state).r += h * (k1.r + 2.0 * k2.r + 2.0 * k3.r + k4.r) / 6.0;
+  (*state).theta += h * (k1.theta + 2.0 * k2.theta + 2.0 * k3.theta + k4.theta) / 6.0;
+  (*state).phi += h * (k1.phi + 2.0 * k2.phi + 2.0 * k3.phi + k4.phi) / 6.0;
+  (*state).ur += h * (k1.ur + 2.0 * k2.ur + 2.0 * k3.ur + k4.ur) / 6.0;
+  (*state).utheta += h * (k1.utheta + 2.0 * k2.utheta + 2.0 * k3.utheta + k4.utheta) / 6.0;
+  (*state).uphi += h * (k1.uphi + 2.0 * k2.uphi + 2.0 * k3.uphi + k4.uphi) / 6.0;
+}
+
 fn performRK45Step(state: ptr<function, GeodesicState>, rk45_state: ptr<function, RK45State>, a: f32, M: f32, atol: f32, rtol: f32, hmin: f32, hmax: f32) -> bool {
   // Precomputed RK45 Dormand-Prince coefficients
   const a21 = 0.2;
@@ -658,7 +696,20 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
   for (var step = 0; step < maxSteps; step++) {
     let prevZ = state.r * cos(state.theta);
     
-    if (performRK45Step(&state, &rk45_state, a, M, atol, rtol, hmin, hmax)) {
+    // Check if we're near the poles (theta close to 0 or pi)
+    let poleThreshold = 0.1; // About 5.7 degrees from pole
+    let nearPole = state.theta < poleThreshold || state.theta > (3.14159265359 - poleThreshold);
+    
+    var stepAccepted = false;
+    if (nearPole) {
+      // Use simple RK4 with larger step size near poles
+      performRK4Step(&state, 0.05, a, M);
+      stepAccepted = true;
+    } else {
+      stepAccepted = performRK45Step(&state, &rk45_state, a, M, atol, rtol, hmin, hmax);
+    }
+    
+    if (stepAccepted) {
       // Step accepted - check termination conditions
       if (state.r < rs * 1.01 || state.r > maxDistance) {
         break;
@@ -774,7 +825,20 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
   let volumetricSampleRate = 1;
   
   for (var step = 0; step < maxSteps; step++) {
-    if (performRK45Step(&state, &rk45_state, a, M, atol, rtol, hmin, hmax)) {
+    // Check if we're near the poles (theta close to 0 or pi)
+    let poleThreshold = 0.1; // About 5.7 degrees from pole
+    let nearPole = state.theta < poleThreshold || state.theta > (3.14159265359 - poleThreshold);
+    
+    var stepAccepted = false;
+    if (nearPole) {
+      // Use simple RK4 with larger step size near poles
+      performRK4Step(&state, 0.05, a, M);
+      stepAccepted = true;
+    } else {
+      stepAccepted = performRK45Step(&state, &rk45_state, a, M, atol, rtol, hmin, hmax);
+    }
+    
+    if (stepAccepted) {
       // Step accepted - check termination conditions
       if (state.r < rs * 1.01 || state.r > maxDistance) {
         break;
