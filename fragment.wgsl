@@ -697,7 +697,7 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
     let prevZ = state.r * cos(state.theta);
     
     // Check if we're near the poles (theta close to 0 or pi)
-    let poleThreshold = 0.1; // About 5.7 degrees from pole
+    let poleThreshold = 0.15; // About 5.7 degrees from pole
     let nearPole = state.theta < poleThreshold || state.theta > (3.14159265359 - poleThreshold);
     
     var stepAccepted = false;
