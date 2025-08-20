@@ -703,7 +703,7 @@ fn traceGeodesicThinDisk(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f32
     var stepAccepted = false;
     if (nearPole) {
       // Use simple RK4 with larger step size near poles
-      performRK4Step(&state, 0.05, a, M);
+      performRK4Step(&state, 0.01, a, M);
       stepAccepted = true;
     } else {
       stepAccepted = performRK45Step(&state, &rk45_state, a, M, atol, rtol, hmin, hmax);
@@ -826,13 +826,14 @@ fn traceGeodesicVolumetric(rayOrigin: vec3<f32>, rayDir: vec3<f32>, a: f32, M: f
   
   for (var step = 0; step < maxSteps; step++) {
     // Check if we're near the poles (theta close to 0 or pi)
-    let poleThreshold = 0.1; // About 5.7 degrees from pole
+    let poleThreshold = 0.002; // About 5.7 degrees from pole
     let nearPole = state.theta < poleThreshold || state.theta > (3.14159265359 - poleThreshold);
     
     var stepAccepted = false;
     if (nearPole) {
+    // if (false) {
       // Use simple RK4 with larger step size near poles
-      performRK4Step(&state, 0.05, a, M);
+      performRK4Step(&state, 0.1, a, M);
       stepAccepted = true;
     } else {
       stepAccepted = performRK45Step(&state, &rk45_state, a, M, atol, rtol, hmin, hmax);
