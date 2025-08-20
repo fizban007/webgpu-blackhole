@@ -912,7 +912,7 @@ fn fs_main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
   let blockY = (pixelY / blockSize) * blockSize;
     
   // Use the center of the block for computation
-  let centerX = f32(blockX + blockSize / 2);
+  let centerX = f32(blockX + blockSize / 2) + 0.2;
   let centerY = f32(blockY + blockSize / 2);
     
   let blockScreenPos = vec2<f32>(
